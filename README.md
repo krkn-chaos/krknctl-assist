@@ -1,64 +1,88 @@
 # krknctl Assist
 
-## One-Call Setup
+> **Note:** `krknctl-assist` is still under active development. Commands, branches, and setup behavior may change. Use this flow with caution, especially outside local testing or integration work.
 
-Use this as the default end-user path. It builds the expected local image,
-precomputes the FAISS assets, verifies the image provenance, builds `krknctl`
-from `gpu_check`, runs an end-to-end assist check, and cleans stale assist
-containers.
+Guide to build the assist service image used by `krknctl assist`:
+
+## Quick Start
+
+Clone the assist service from the organization repository:
 
 ```bash
-cd ~/ir-chaos
-./scripts/setup_krknctl_assist.sh --verify
+git clone https://github.com/krkn-chaos/krknctl-assist.git ~/krknctl-assist
+cd ~/krknctl-assist
 ```
 
-## Interactive Assist
-
-Launch through the setup wrapper instead of running `krknctl` directly. The
-wrapper clears old containers first and disables terminal suspend while the
-interactive session is active, which avoids the `proxy already running` state
-after an accidental `Ctrl+Z`.
+For the current assist integration work, use Aryan's `krknctl` fork as the
+`krknctl` source of truth:
 
 ```bash
-cd ~/ir-chaos
-./scripts/setup_krknctl_assist.sh --launch
+export KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git
+export KRKNCTL_BRANCH=fix/assist-source-doc-details
 ```
 
-## Minimal Commands
+Clone the forked `krknctl` checkout used by the wrapper:
 
 ```bash
-# Clean stale krknctl assist containers.
+git clone --branch "$KRKNCTL_BRANCH" "$KRKNCTL_REPO" ~/krknctl-fork
+```
+
+Run the full verification flow:
+
+```bash
+cd ~/krknctl-assist
 ./scripts/setup_krknctl_assist.sh --cleanup
 
-# Rebuild and verify from scratch.
-./scripts/setup_krknctl_assist.sh --verify --force-build
+./scripts/setup_krknctl_assist.sh \
+  --verify \
+  --krknctl-dir ~/krknctl-fork \
+  --krknctl-branch "$KRKNCTL_BRANCH"
+```
 
-# Verify one query and expected scenario.
-./scripts/run_krknctl_integration_mac.sh \
-  "Gimme the krknctl command to cause pod failure in namespace production but exclude any pods labeled env=dev" \
-  pod-scenarios
+## Interactive Launch
 
-# Start the debug and compat APIs for local retrieval work.
+Use the wrapper for manual testing:
+
+```bash
+./scripts/setup_krknctl_assist.sh \
+  --launch \
+  --krknctl-dir ~/krknctl-fork \
+  --krknctl-branch "$KRKNCTL_BRANCH"
+```
+
+The wrapper is preferred over running `krknctl assist run` directly because it cleans stale containers first.
+
+
+## Rebuild Assist Only
+
+Use this when you only want to rebuild and smoke-test the assist image, without letting the wrapper clone, build, or run `krknctl`:
+
+```bash
+cd ~/krknctl-assist
+./scripts/setup_krknctl_assist.sh --cleanup
+./scripts/setup_krknctl_assist.sh --setup-only --force-build --skip-krknctl
+```
+
+## Common Commands
+
+```bash
+# Clean stale krknctl assist containers and processes.
+cd ~/krknctl-assist
+./scripts/setup_krknctl_assist.sh --cleanup
+
+# Rebuild and verify everything from scratch (using Aryan's krknctl fork).
+KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git \
+  ./scripts/setup_krknctl_assist.sh \
+  --verify \
+  --force-build \
+  --krknctl-dir ~/krknctl-fork \
+  --krknctl-branch fix/assist-source-doc-details
+
+# Start the debug and compat APIs for retrieval work.
 ./scripts/pipeline.sh --verbose
 
-# Run benchmark after the debug API is healthy at http://127.0.0.1:18080.
+# Run a benchmark after the debug API is healthy at http://127.0.0.1:18080.
 ./scripts/benchmark.py --n 100 --fr 25 --out bench.json --clear-cache
-```
-
-If you run `krknctl` directly, run it from the checkout that contains the
-built binary:
-
-```bash
-cd ~/krknctl
-PATH="$PATH:/opt/homebrew/bin" ./krknctl assist run
-```
-
-If you see `bind: address already in use` for port 8080, clean up stale assist
-containers first:
-
-```bash
-cd ~/ir-chaos
-./scripts/setup_krknctl_assist.sh --cleanup
 ```
 
 ## API Endpoints
@@ -76,4 +100,13 @@ curl -s http://127.0.0.1:18080/retrieve \
 curl -s http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"krkn-assist","messages":[{"role":"user","content":"network latency between services"}]}' | jq
+```
+
+## Troubleshooting
+
+If port `8080` is already in use or `krknctl` reports `proxy already running`, clean up stale assist containers first:
+
+```bash
+cd ~/krknctl-assist
+./scripts/setup_krknctl_assist.sh --cleanup
 ```
