@@ -41,7 +41,11 @@ cd ~/krknctl-assist
 
 ## Interactive Launch
 
-Use the wrapper for manual testing:
+```bash
+export KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git
+export KRKNCTL_BRANCH=fix/assist-source-doc-details
+```
+then
 
 ```bash
 ./scripts/setup_krknctl_assist.sh \
@@ -49,9 +53,6 @@ Use the wrapper for manual testing:
   --krknctl-dir ~/krknctl-fork \
   --krknctl-branch "$KRKNCTL_BRANCH"
 ```
-
-The wrapper is preferred over running `krknctl assist run` directly because it cleans stale containers first.
-
 
 ## Rebuild Assist Only
 
