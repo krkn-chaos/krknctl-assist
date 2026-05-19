@@ -13,18 +13,21 @@ git clone https://github.com/krkn-chaos/krknctl-assist.git ~/krknctl-assist
 cd ~/krknctl-assist
 ```
 
-For the current assist integration work, use Aryan's `krknctl` fork as the
-`krknctl` source of truth:
+For the current assist integration work, use the active PR in upstream
+`krknctl`:
 
 ```bash
-export KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git
-export KRKNCTL_BRANCH=fix/assist-source-doc-details
+export KRKNCTL_REPO=https://github.com/krkn-chaos/krknctl.git
+export KRKNCTL_BRANCH=pr-148
 ```
 
-Clone the forked `krknctl` checkout used by the wrapper:
+Clone and checkout the PR branch used by the wrapper:
 
 ```bash
-git clone --branch "$KRKNCTL_BRANCH" "$KRKNCTL_REPO" ~/krknctl-fork
+git clone "$KRKNCTL_REPO" ~/krknctl-fork
+cd ~/krknctl-fork
+git fetch origin pull/148/head:pr-148
+git checkout pr-148
 ```
 
 Run the full verification flow:
@@ -42,8 +45,8 @@ cd ~/krknctl-assist
 ## Interactive Launch
 
 ```bash
-export KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git
-export KRKNCTL_BRANCH=fix/assist-source-doc-details
+export KRKNCTL_REPO=https://github.com/krkn-chaos/krknctl.git
+export KRKNCTL_BRANCH=pr-148
 ```
 then
 
@@ -71,13 +74,13 @@ cd ~/krknctl-assist
 cd ~/krknctl-assist
 ./scripts/setup_krknctl_assist.sh --cleanup
 
-# Rebuild and verify everything from scratch (using Aryan's krknctl fork).
-KRKNCTL_REPO=https://github.com/AryanPrakhar/krknctl.git \
+# Rebuild and verify everything from scratch (using PR 148).
+KRKNCTL_REPO=https://github.com/krkn-chaos/krknctl.git \
   ./scripts/setup_krknctl_assist.sh \
   --verify \
   --force-build \
   --krknctl-dir ~/krknctl-fork \
-  --krknctl-branch fix/assist-source-doc-details
+  --krknctl-branch pr-148
 
 # Start the debug and compat APIs for retrieval work.
 ./scripts/pipeline.sh --verbose
