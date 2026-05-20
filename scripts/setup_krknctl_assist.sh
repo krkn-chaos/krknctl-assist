@@ -644,12 +644,15 @@ ensure_krknctl_checkout() {
 
   local fetch_ref="$KRKNCTL_BRANCH"
   local checkout_ref="$KRKNCTL_BRANCH"
+  local is_pr_ref=0
 
   if [[ "$KRKNCTL_BRANCH" =~ ^pr-([0-9]+)$ ]]; then
-    fetch_ref="pull/${BASH_REMATCH[1]}/head:${KRKNCTL_BRANCH}"
+    fetch_ref="pull/${BASH_REMATCH[1]}/head"
+    is_pr_ref=1
   elif [[ "$KRKNCTL_BRANCH" =~ ^(refs/)?pull/([0-9]+)/head$ ]]; then
     checkout_ref="pr-${BASH_REMATCH[2]}"
-    fetch_ref="pull/${BASH_REMATCH[2]}/head:${checkout_ref}"
+    fetch_ref="pull/${BASH_REMATCH[2]}/head"
+    is_pr_ref=1
   fi
 
   if [[ ! -d "$KRKNCTL_DIR/.git" ]]; then
@@ -658,6 +661,35 @@ ensure_krknctl_checkout() {
   fi
 
   run git -C "$KRKNCTL_DIR" fetch origin "$fetch_ref"
+
+  if [[ "$is_pr_ref" == "1" ]]; then
+    local current_branch
+    current_branch="$(git -C "$KRKNCTL_DIR" branch --show-current)"
+
+    if [[ "$current_branch" == "$checkout_ref" ]]; then
+      if git -C "$KRKNCTL_DIR" diff --quiet && git -C "$KRKNCTL_DIR" diff --cached --quiet; then
+        run git -C "$KRKNCTL_DIR" checkout -B "$checkout_ref" FETCH_HEAD
+      else
+        warn "krknctl checkout has local changes; staying on $current_branch"
+      fi
+    elif git -C "$KRKNCTL_DIR" show-ref --verify --quiet "refs/heads/$checkout_ref"; then
+      if ! git -C "$KRKNCTL_DIR" checkout "$checkout_ref" >>"$LOG_FILE" 2>&1; then
+        fail "Could not checkout $checkout_ref in $KRKNCTL_DIR. Resolve local changes and rerun."
+      fi
+      if git -C "$KRKNCTL_DIR" diff --quiet && git -C "$KRKNCTL_DIR" diff --cached --quiet; then
+        run git -C "$KRKNCTL_DIR" checkout -B "$checkout_ref" FETCH_HEAD
+      else
+        warn "krknctl checkout has local changes; staying on $checkout_ref"
+      fi
+    else
+      run git -C "$KRKNCTL_DIR" checkout -B "$checkout_ref" FETCH_HEAD
+    fi
+
+    log "✅ krknctl branch ready: $checkout_ref"
+    run go -C "$KRKNCTL_DIR" build -o krknctl .
+    log "✅ krknctl binary built: $KRKNCTL_DIR/krknctl"
+    return 0
+  fi
 
   if ! git -C "$KRKNCTL_DIR" checkout "$checkout_ref" >>"$LOG_FILE" 2>&1; then
     local current_branch
