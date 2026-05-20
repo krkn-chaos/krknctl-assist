@@ -10,7 +10,7 @@ RETRIEVER_MODEL = os.environ.get(
     "Qwen/Qwen3-Embedding-0.6B",
 )
 
-MIN_FAISS_SCORE = 0.23
+MIN_FAISS_SCORE = float(os.environ.get("MIN_FAISS_SCORE", "0.30"))
 FAISS_TOP2_GAP_THRESHOLD = 0.07
 CE_TOP2_GAP_THRESHOLD = 1.0
 FINAL_CE_WEIGHT = 0.6
@@ -22,8 +22,8 @@ MIN_QUERY_WORDS = 4
 RERANK_SCORE_FLOOR = float(os.environ.get("RERANK_SCORE_FLOOR", "-11.47"))
 RERANK_SCORE_CEILING = float(os.environ.get("RERANK_SCORE_CEILING", "9.0"))
 RERANK_TOP_FRACTION = float(os.environ.get("RERANK_TOP_FRACTION", "0.25"))
-MIN_CE_SCORE = float(os.environ.get("MIN_CE_SCORE", str(RERANK_SCORE_FLOOR)))
-MIN_MATCH_SCORE = float(os.environ.get("MIN_MATCH_SCORE", "0.10"))
+MIN_CE_SCORE = float(os.environ.get("MIN_CE_SCORE", "-4.0"))
+MIN_MATCH_SCORE = float(os.environ.get("MIN_MATCH_SCORE", "0.30"))
 MIN_MULTI_SCORE = float(os.environ.get("MIN_MULTI_SCORE", "0.28"))
 MULTI_MATCH_SCORE_GAP = float(os.environ.get("MULTI_MATCH_SCORE_GAP", "0.08"))
 MAX_MULTI_SCENARIOS = int(os.environ.get("MAX_MULTI_SCENARIOS", "2"))
