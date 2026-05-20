@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
-from .settings import MERGED_DOCS_DEBUG_DIR, NON_SCENARIO_DOCS
+from .settings import EXCLUDED_SCENARIO_IDS, MERGED_DOCS_DEBUG_DIR, NON_SCENARIO_DOCS
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,9 @@ def _clone_repository(repo_url: str, dest: str, branch: str | None = None) -> No
 
 def _append_doc(doc_map: Dict[str, List[str]], scenario_id: str, content: str) -> None:
     if not scenario_id or not content:
+        return
+    if scenario_id in EXCLUDED_SCENARIO_IDS:
+        logger.debug("Skipping excluded scenario id: %s", scenario_id)
         return
     normalized = re.sub(r"\s+", " ", content).strip().lower()
     if not normalized:

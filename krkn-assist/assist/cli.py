@@ -14,7 +14,10 @@ from .settings import (
 
 
 def main() -> None:
-    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper())
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=log_level)
+    for logger_name in ("httpx", "huggingface_hub", "transformers", "optimum", "onnxruntime"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description="krkn retriever maintenance CLI")
     parser.add_argument(
         "--device",

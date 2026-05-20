@@ -401,6 +401,10 @@ warm_index_assets() {
     -e "SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface"
     -e "TORCH_HOME=/root/.cache/torch"
     -e "RETRIEVER_BACKEND=$warm_backend"
+    -e "LOG_LEVEL=WARNING"
+    -e "TRANSFORMERS_VERBOSITY=error"
+    -e "HF_HUB_DISABLE_PROGRESS_BARS=1"
+    -e "TOKENIZERS_PARALLELISM=false"
   )
   local passthrough_vars=(
     RETRIEVER_BACKEND
@@ -414,6 +418,7 @@ warm_index_assets() {
     MIN_MATCH_SCORE
     MIN_FAISS_SCORE
     MIN_CE_SCORE
+    EXCLUDED_SCENARIO_IDS
     MIN_MULTI_SCORE
     MULTI_MATCH_SCORE_GAP
     MAX_MULTI_SCENARIOS
@@ -440,7 +445,8 @@ warm_index_assets() {
     env_args+=(-e "HUGGING_FACE_HUB_TOKEN=$HUGGING_FACE_HUB_TOKEN")
   fi
 
-  run podman run --rm \
+  log "Running warm index container; detailed indexing output is in $LOG_FILE"
+  if ! podman run --rm \
     ${warm_run_args[@]+"${warm_run_args[@]}"} \
     -v "$ROOT_DIR/krkn-assist:/app$mount_suffix" \
     -v "$HF_CACHE_DIR:/root/.cache/huggingface$mount_suffix" \
@@ -449,7 +455,11 @@ warm_index_assets() {
     ${env_args[@]+"${env_args[@]}"} \
     -w /app \
     "$IMAGE" \
-    python3 retriever.py index
+    python3 retriever.py index >>"$LOG_FILE" 2>&1; then
+    tail -n 120 "$LOG_FILE"
+    fail "FAISS warm-up failed"
+  fi
+  log "✅ FAISS assets precomputed"
 
   test -s "$warm_index_path/krkn-scenarios.index" \
     || fail "FAISS warm-up did not produce krkn-scenarios.index"
@@ -517,6 +527,7 @@ smoke_test_image() {
     MIN_MATCH_SCORE
     MIN_FAISS_SCORE
     MIN_CE_SCORE
+    EXCLUDED_SCENARIO_IDS
     MIN_MULTI_SCORE
     MULTI_MATCH_SCORE_GAP
     MAX_MULTI_SCENARIOS

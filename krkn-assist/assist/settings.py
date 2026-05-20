@@ -85,3 +85,9 @@ NON_SCENARIO_DOCS = {
     "chaos-recommender.md",
     "aggregated_docs.md",
 }
+
+EXCLUDED_SCENARIO_IDS = {
+    item.strip()
+    for item in os.environ.get("EXCLUDED_SCENARIO_IDS", "dummy-scenario").split(",")
+    if item.strip()
+}
