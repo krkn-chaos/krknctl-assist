@@ -5,7 +5,7 @@ Install once:
 ```bash
 git clone https://github.com/krkn-chaos/krknctl-assist.git ~/krknctl-assist
 cd ~/krknctl-assist
-./scripts/install_krknctl_assist.sh
+bash ./scripts/install_krknctl_assist.sh
 ```
 
 Run:

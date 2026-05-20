@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="$ROOT_DIR/krknctl-assist"
 TARGET_DIR=""
 preferred_dirs=(
   "/opt/homebrew/bin"
@@ -34,10 +33,42 @@ fi
   exit 1
 }
 
-ln -sf "$SOURCE" "$TARGET_DIR/krknctl-assist"
+target="$TARGET_DIR/krknctl-assist"
+
+# Install an executable wrapper instead of a symlink so we don't depend on
+# git tracking +x bits for repo files.
+tmp_template="$(mktemp "$TARGET_DIR/krknctl-assist.tmp.XXXXXX")"
+tmp_out="$(mktemp "$TARGET_DIR/krknctl-assist.tmp.XXXXXX")"
+
+cat >"$tmp_template" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+assist_dir="${KRKNCTL_ASSIST_HOME:-__KRKNCTL_ASSIST_ROOT__}"
+
+if [[ ! -d "$assist_dir" ]]; then
+  if [[ -z "${KRKNCTL_ASSIST_HOME:-}" && -d "$HOME/krknctl-assist" ]]; then
+    assist_dir="$HOME/krknctl-assist"
+  else
+    echo "krknctl-assist: repo not found at $assist_dir" >&2
+    echo "Set KRKNCTL_ASSIST_HOME to your clone, or clone it to ~/krknctl-assist." >&2
+    exit 1
+  fi
+fi
+
+exec bash "$assist_dir/scripts/run_krknctl_launch_mac.sh" "$@"
+EOF
+
+# Substitute the install-time repo path into the wrapper, without expanding
+# any of the runtime variables ($HOME, $@, etc).
+sed "s|__KRKNCTL_ASSIST_ROOT__|$ROOT_DIR|g" "$tmp_template" >"$tmp_out"
+rm -f "$tmp_template"
+chmod 0755 "$tmp_out"
+mv -f "$tmp_out" "$target"
+chmod 0755 "$target"
 
 cat <<EOF
-Installed: $TARGET_DIR/krknctl-assist
+Installed: $target
 
 Run:
   krknctl-assist
