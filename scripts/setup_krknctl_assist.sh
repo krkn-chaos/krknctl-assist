@@ -627,22 +627,32 @@ verify_image_provenance() {
 ensure_krknctl_checkout() {
   [[ "$SKIP_KRKNCTL" == "0" ]] || return 0
 
+  local fetch_ref="$KRKNCTL_BRANCH"
+  local checkout_ref="$KRKNCTL_BRANCH"
+
+  if [[ "$KRKNCTL_BRANCH" =~ ^pr-([0-9]+)$ ]]; then
+    fetch_ref="pull/${BASH_REMATCH[1]}/head:${KRKNCTL_BRANCH}"
+  elif [[ "$KRKNCTL_BRANCH" =~ ^(refs/)?pull/([0-9]+)/head$ ]]; then
+    checkout_ref="pr-${BASH_REMATCH[2]}"
+    fetch_ref="pull/${BASH_REMATCH[2]}/head:${checkout_ref}"
+  fi
+
   if [[ ! -d "$KRKNCTL_DIR/.git" ]]; then
     mkdir -p "$(dirname "$KRKNCTL_DIR")"
     run git clone "$KRKNCTL_REPO" "$KRKNCTL_DIR"
   fi
 
-  run git -C "$KRKNCTL_DIR" fetch origin "$KRKNCTL_BRANCH"
+  run git -C "$KRKNCTL_DIR" fetch origin "$fetch_ref"
 
-  if ! git -C "$KRKNCTL_DIR" checkout "$KRKNCTL_BRANCH" >>"$LOG_FILE" 2>&1; then
+  if ! git -C "$KRKNCTL_DIR" checkout "$checkout_ref" >>"$LOG_FILE" 2>&1; then
     local current_branch
     current_branch="$(git -C "$KRKNCTL_DIR" branch --show-current)"
-    if [[ "$current_branch" != "$KRKNCTL_BRANCH" ]]; then
-      fail "Could not checkout $KRKNCTL_BRANCH in $KRKNCTL_DIR. Resolve local changes and rerun."
+    if [[ "$current_branch" != "$checkout_ref" ]]; then
+      fail "Could not checkout $checkout_ref in $KRKNCTL_DIR. Resolve local changes and rerun."
     fi
     warn "krknctl checkout has local changes; staying on $current_branch"
   else
-    log "✅ krknctl branch ready: $KRKNCTL_BRANCH"
+    log "✅ krknctl branch ready: $checkout_ref"
   fi
 
   run go -C "$KRKNCTL_DIR" build -o krknctl .
