@@ -1,0 +1,70 @@
+FROM fedora:42
+
+USER 0
+
+ARG GGML_BACKEND=cpu
+ARG TORCH_BUILD=cpu
+ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu126
+
+# Keep the Linux image independent from the macOS/Vulkan bootstrap path.
+# Linux defaults to the torch backend and only installs Vulkan bits when
+# explicitly requested.
+RUN if [ "$GGML_BACKEND" = "vulkan" ]; then \
+      dnf -y install \
+          dnf-plugins-core \
+          dnf-plugin-versionlock && \
+      dnf -y copr enable slp/mesa-libkrun-vulkan && \
+      dnf -y install \
+          mesa-vulkan-drivers \
+          vulkan-loader-devel \
+          vulkan-headers \
+          vulkan-tools \
+          vulkan-loader \
+          glslc && \
+      dnf versionlock add mesa-vulkan-drivers && \
+      dnf clean all; \
+    fi
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+WORKDIR /app
+
+ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+    git \
+    python3 python3-pip python3-devel \
+    gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
+    spirv-headers-devel && \
+    dnf clean all
+
+RUN pip install --upgrade pip setuptools wheel && \
+    if [ "$GGML_BACKEND" = "vulkan" ]; then \
+      CMAKE_ARGS="\
+        -DGGML_VULKAN=on \
+        -DGGML_VULKAN_COOPMAT=OFF \
+        -DGGML_VULKAN_COOPMAT2=OFF \
+      " FORCE_CMAKE=1 \
+        pip install --no-binary=llama-cpp-python "llama-cpp-python==0.3.19"; \
+    fi
+
+RUN if [ "$TORCH_BUILD" = "cuda" ]; then \
+      pip install --index-url "$TORCH_CUDA_INDEX_URL" torch; \
+    else \
+      pip install --index-url https://download.pytorch.org/whl/cpu torch; \
+    fi && \
+    pip install \
+      fastapi \
+      uvicorn \
+      "transformers>=4.52.4" \
+      "huggingface_hub[cli]" \
+      sentence-transformers \
+      faiss-cpu \
+      onnxruntime \
+      "optimum[onnxruntime]" \
+      requests
+
+COPY krkn-assist/ /app/
+
+EXPOSE 8080 18080
+CMD ["python3", "api_server.py"]

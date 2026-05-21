@@ -19,6 +19,10 @@ FORCE_BUILD=0
 SKIP_BREW=0
 SKIP_KRKNCTL=0
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+DOCKERFILE_PATH="${KRKNCTL_ASSIST_DOCKERFILE:-}"
+IMAGE_BUILD_BACKEND=""
+CONTAINER_PLATFORM=""
+BUILD_ARGS=()
 LOG_DIR="${KRKNCTL_ASSIST_LOG_DIR:-$ROOT_DIR/setup-logs}"
 LOG_FILE="$LOG_DIR/krknctl-assist-setup-$(date -u +%Y%m%dT%H%M%SZ).log"
 HEALTH_TIMEOUT_SECONDS="${KRKNCTL_ASSIST_HEALTH_TIMEOUT_SECONDS:-600}"
@@ -336,8 +340,66 @@ image_matches_checkout() {
   return "$status"
 }
 
+configure_image_build() {
+  local podman_platform
+  local requested_backend="${RETRIEVER_BACKEND:-auto}"
+  podman_platform="$(podman info --format '{{.Host.OS}}/{{.Host.Arch}}' 2>/dev/null || true)"
+
+  if [[ -z "$DOCKERFILE_PATH" ]]; then
+    if [[ "$HOST_OS" == "darwin" ]]; then
+      DOCKERFILE_PATH="$ROOT_DIR/krkn-assist/Dockerfile"
+    else
+      DOCKERFILE_PATH="$ROOT_DIR/krkn-assist/Dockerfile.linux"
+    fi
+  fi
+
+  if [[ "$DOCKERFILE_PATH" == "$ROOT_DIR/krkn-assist/Dockerfile" ]]; then
+    CONTAINER_PLATFORM="linux/arm64"
+  else
+    case "$podman_platform" in
+      linux/amd64|linux/arm64)
+        CONTAINER_PLATFORM="$podman_platform"
+        ;;
+      */x86_64)
+        CONTAINER_PLATFORM="linux/amd64"
+        ;;
+      */aarch64|*/arm64)
+        CONTAINER_PLATFORM="linux/arm64"
+        ;;
+      *)
+        if [[ "$(uname -m)" == "x86_64" ]]; then
+          CONTAINER_PLATFORM="linux/amd64"
+        else
+          CONTAINER_PLATFORM="linux/arm64"
+        fi
+        ;;
+    esac
+  fi
+
+  case "$requested_backend" in
+    vulkan)
+      IMAGE_BUILD_BACKEND="vulkan"
+      ;;
+    auto)
+      if [[ "$HOST_OS" == "darwin" ]]; then
+        IMAGE_BUILD_BACKEND="vulkan"
+      else
+        IMAGE_BUILD_BACKEND="cpu"
+      fi
+      ;;
+    *)
+      IMAGE_BUILD_BACKEND="cpu"
+      ;;
+  esac
+
+  BUILD_ARGS=(
+    --platform "$CONTAINER_PLATFORM"
+    --build-arg "GGML_BACKEND=$IMAGE_BUILD_BACKEND"
+  )
+}
+
 build_image() {
-  run podman build -f "$ROOT_DIR/krkn-assist/Dockerfile" -t "$IMAGE" "$ROOT_DIR"
+  run podman build -f "$DOCKERFILE_PATH" "${BUILD_ARGS[@]}" -t "$IMAGE" "$ROOT_DIR"
 }
 
 warm_index_assets() {
@@ -802,6 +864,10 @@ log "Log: $LOG_FILE"
 ensure_brew_packages
 ensure_basic_tools
 ensure_podman_ready
+configure_image_build
+log "Dockerfile: $DOCKERFILE_PATH"
+log "Container platform: $CONTAINER_PLATFORM"
+log "Image build backend: $IMAGE_BUILD_BACKEND"
 
 if [[ "$MODE" == "cleanup" ]]; then
   stop_assist_containers_on_8080

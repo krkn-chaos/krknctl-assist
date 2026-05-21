@@ -3,11 +3,23 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR=""
-preferred_dirs=(
-  "/opt/homebrew/bin"
-  "/usr/local/bin"
-  "$HOME/.local/bin"
-)
+HOST_OS="$(uname -s)"
+
+case "$HOST_OS" in
+  Darwin)
+    preferred_dirs=(
+      "/opt/homebrew/bin"
+      "/usr/local/bin"
+      "$HOME/.local/bin"
+    )
+    ;;
+  *)
+    preferred_dirs=(
+      "/usr/local/bin"
+      "$HOME/.local/bin"
+    )
+    ;;
+esac
 
 for dir in "${preferred_dirs[@]}"; do
   if [[ "$dir" == "$HOME/.local/bin" ]]; then
@@ -56,7 +68,7 @@ if [[ ! -d "$assist_dir" ]]; then
   fi
 fi
 
-exec bash "$assist_dir/scripts/run_krknctl_launch_mac.sh" "$@"
+exec bash "$assist_dir/scripts/run_krknctl_launch.sh" "$@"
 EOF
 
 # Substitute the install-time repo path into the wrapper, without expanding

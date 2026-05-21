@@ -75,7 +75,7 @@ HF_CACHE_DIR="${HF_CACHE_DIR:-$ROOT_DIR/.cache/huggingface}"
 TORCH_CACHE_DIR="${TORCH_CACHE_DIR:-$ROOT_DIR/.cache/torch}"
 ENGINE="${CONTAINER_ENGINE:-podman}"
 IMAGE="${RETRIEVER_IMAGE:-quay.io/krkn-chaos/krknctl-assist:faiss-latest}"
-DOCKERFILE="${RETRIEVER_DOCKERFILE:-$ROOT_DIR/krkn-assist/Dockerfile}"
+DOCKERFILE="${RETRIEVER_DOCKERFILE:-}"
 FORCE_BUILD="${RETRIEVER_FORCE_BUILD:-0}"
 FORCE_REINDEX_RAW="${FORCE_REINDEX:-${RETRIEVER_FORCE_REINDEX:-0}}"
 FORCE_REINDEX="false"
@@ -134,6 +134,14 @@ fi
 
 # Auto-detect host OS
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+
+if [[ -z "$DOCKERFILE" ]]; then
+  if [[ "$HOST_OS" == "darwin" ]]; then
+    DOCKERFILE="$ROOT_DIR/krkn-assist/Dockerfile"
+  else
+    DOCKERFILE="$ROOT_DIR/krkn-assist/Dockerfile.linux"
+  fi
+fi
 
 # On macOS with podman, the libkrun VM provider is required for Vulkan GPU
 # passthrough via virtio-gpu/Venus.  Without this, podman silently falls back to
@@ -208,6 +216,8 @@ DEVICE_ARGS=(--device auto)
 LLAMA_MOUNT_ARGS=()
 GPU_RUNTIME_KIND="none"
 GGML_BACKEND_DESIRED=""
+CONTAINER_PLATFORM=""
+PLATFORM_BUILD_ARGS=()
 
 MOUNT_LABEL_SUFFIX=""
 if [[ "$ENGINE" == "podman" && "$HOST_OS" != "darwin" ]]; then
@@ -529,6 +539,7 @@ build_image() {
   "$ENGINE" build \
     -t "$IMAGE" \
     -f "$DOCKERFILE" \
+    ${PLATFORM_BUILD_ARGS[@]+"${PLATFORM_BUILD_ARGS[@]}"} \
     ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
     "$ROOT_DIR"
 }
@@ -890,6 +901,28 @@ fi
 
 # ── Configure acceleration (sets BUILD_ARGS, GPU_FLAGS, DEVICE_ARGS) ──
 
+if [[ "$ENGINE" == "podman" ]]; then
+  if [[ "$DOCKERFILE" == "$ROOT_DIR/krkn-assist/Dockerfile" ]]; then
+    CONTAINER_PLATFORM="linux/arm64"
+  else
+    podman_platform="$("$ENGINE" info --format '{{.Host.OS}}/{{.Host.Arch}}' 2>/dev/null || true)"
+    case "$podman_platform" in
+      linux/amd64|linux/arm64)
+        CONTAINER_PLATFORM="$podman_platform"
+        ;;
+      */x86_64)
+        CONTAINER_PLATFORM="linux/amd64"
+        ;;
+      */aarch64|*/arm64)
+        CONTAINER_PLATFORM="linux/arm64"
+        ;;
+    esac
+  fi
+fi
+if [[ -n "$CONTAINER_PLATFORM" ]]; then
+  PLATFORM_BUILD_ARGS=(--platform "$CONTAINER_PLATFORM")
+fi
+
 configure_acceleration
 
 if [[ "$VERBOSE" == "1" ]]; then
@@ -899,6 +932,7 @@ if [[ "$VERBOSE" == "1" ]]; then
   echo "Query: ${QUERY:-<interactive>}"
   echo "Retrieve-K: $RETRIEVE_K  |  Rerank-K: $RERANK_K"
   echo "Engine: $ENGINE  |  Image: $IMAGE"
+  echo "Container platform: ${CONTAINER_PLATFORM:-auto}"
   echo "Host OS: $HOST_OS  |  Backend: $BACKEND"
   echo "========================================"
   echo ""
