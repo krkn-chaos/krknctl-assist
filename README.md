@@ -19,5 +19,6 @@ Useful options:
 ```bash
 KRKNCTL_BRANCH=pr-149 krknctl-assist
 KRKNCTL_DIR=~/tmp/krknctl krknctl-assist --force-build
-./scripts/setup_krknctl_assist.sh --cleanup
+krknctl-assist --cleanup
+krknctl-assist --force-build
 ```
