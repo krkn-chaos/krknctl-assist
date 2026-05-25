@@ -2,11 +2,8 @@
 models
 __pycache__
 krkn-retriever/venv
-.claude/
-claude.md
 venv
 packages/
-docs/
 setup-logs/
 logs.md
 krkn-assist/faiss-index.warm/
