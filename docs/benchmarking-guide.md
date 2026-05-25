@@ -37,4 +37,4 @@ Small changes are normal, especially when the model backend or CPU features diff
 * A drop in `recall@k` usually means the correct scenario is not being surfaced in the candidate set i.e. bad hybrid retrieval
 * A rise in `latency_ms.p95` usually means a subset of queries is getting much slower, often because reranking or model loading changed, or user-input drift.
 * A rise in `stage_timing_ms.rerank.avg` usually points to cross-encoder backend, quantization, CPU capability changes, ONNX Runtime unavailability
-* A rise in `stage_timing_ms.retrieval.avg` usually points to embedding, index, or candidate-generation regressions. This does not account indexing duration which once built could be re-used.
+* A rise in `stage_timing_ms.retrieval.avg` usually measures steady-state retrieval latency after indexes are already built and loaded. Index build time should be tracked separately, if needed, as an offline pipeline metric.
