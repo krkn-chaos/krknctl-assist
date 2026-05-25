@@ -32,6 +32,9 @@ GGUF_REPO="${RETRIEVER_GGUF_REPO:-Qwen/Qwen3-Embedding-0.6B-GGUF}"
 GGUF_FILE="${RETRIEVER_GGUF_FILE:-Qwen3-Embedding-0.6B-f16.gguf}"
 AUTO_DOWNLOAD_MODEL="${RETRIEVER_AUTO_DOWNLOAD_MODEL:-1}"
 HF_TOKEN_VALUE="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-${HUGGINGFACE_TOKEN:-}}}"
+FORCE_REINDEX_RAW="${FORCE_REINDEX:-${RETRIEVER_FORCE_REINDEX:-0}}"
+FORCE_REINDEX=0
+WARM_INDEX_RAN=0
 SMOKE_CONTAINER=""
 
 usage() {
@@ -55,6 +58,7 @@ Options:
   --skip-krknctl            Do not clone/build/run krknctl
   Env: KRKNCTL_ASSIST_HEALTH_TIMEOUT_SECONDS
                            Override smoke-test readiness wait in seconds
+       FORCE_REINDEX=1     Regenerate FAISS assets instead of using bundled assets
   -h, --help                Show this help
 EOF
 }
@@ -77,6 +81,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
+
+case "$FORCE_REINDEX_RAW" in
+  1|true|TRUE|yes|YES) FORCE_REINDEX=1 ;;
+  *) FORCE_REINDEX=0 ;;
+esac
 
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
@@ -116,6 +125,10 @@ run_quiet() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+host_has_vulkan_device() {
+  [[ -e /dev/dri/renderD128 || -e /dev/dri/card0 || -d /dev/dri ]]
 }
 
 download_gguf_model() {
@@ -285,6 +298,14 @@ repo_files_exist() {
   )
 }
 
+index_assets_ready() {
+  repo_files_exist \
+    "faiss-index/krkn-scenarios.index" \
+    "faiss-index/krkn-scenarios.meta" \
+    "faiss-index/krkn-scenarios.docs.json" \
+    "faiss-index/krkn-scenarios.list.txt"
+}
+
 image_matches_checkout() {
   podman image exists "$IMAGE" >/dev/null 2>&1 || return 1
 
@@ -381,11 +402,7 @@ configure_image_build() {
       IMAGE_BUILD_BACKEND="vulkan"
       ;;
     auto)
-      if [[ "$HOST_OS" == "darwin" ]]; then
-        IMAGE_BUILD_BACKEND="vulkan"
-      else
-        IMAGE_BUILD_BACKEND="cpu"
-      fi
+      IMAGE_BUILD_BACKEND="vulkan"
       ;;
     *)
       IMAGE_BUILD_BACKEND="cpu"
@@ -416,13 +433,15 @@ warm_index_assets() {
     mount_suffix=":Z"
   fi
 
-  if [[ -z "$warm_backend" ]]; then
-    if [[ "$HOST_OS" == "darwin" ]]; then
-      warm_backend="vulkan"
-    else
-      warm_backend="torch"
-    fi
+  if [[ "$FORCE_REINDEX" == "0" ]] && index_assets_ready; then
+    log "✅ FAISS assets already present; skipping warm index (set FORCE_REINDEX=1 to regenerate)"
+    return 0
   fi
+
+  if [[ -z "$warm_backend" ]]; then
+    warm_backend="vulkan"
+  fi
+  WARM_INDEX_RAN=1
 
   if [[ "$warm_backend" == "vulkan" ]]; then
     if [[ -z "$warm_model_host_path" ]]; then
@@ -444,7 +463,7 @@ warm_index_assets() {
     warm_model_container_path="/models/$warm_model_basename"
     warm_mount_args=(-v "$(dirname "$warm_model_abs"):/models$mount_suffix")
 
-    if [[ "$HOST_OS" == "darwin" ]]; then
+    if [[ "$HOST_OS" == "darwin" ]] || host_has_vulkan_device; then
       warm_run_args=(--device /dev/dri)
     fi
   fi
@@ -550,8 +569,10 @@ build_assist_image() {
   log "Building bootstrap image from repo root so Dockerfile COPY paths resolve"
   build_image
   warm_index_assets
-  log "Rebuilding final image with warmed FAISS assets"
-  build_image
+  if [[ "$WARM_INDEX_RAN" == "1" ]]; then
+    log "Rebuilding final image with warmed FAISS assets"
+    build_image
+  fi
 }
 
 wait_for_health() {
