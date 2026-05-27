@@ -163,7 +163,7 @@ def log_vulkan_device_status(devices: list[dict]) -> None:
 
     renderer_names = ", ".join(str(device.get("name")) for device in devices)
     logger.warning(
-        "Vulkan is using a software renderer (%s); falling back to CPU-only llama.cpp",
+        "Vulkan software renderer active: %s",
         renderer_names,
     )
 
@@ -529,53 +529,15 @@ def _scenario_support_text(
     return compact_for_reranking("\n\n".join(parts))
 
 
-def cuda_runtime_works() -> bool:
-    try:
-        import torch
-
-        if not torch.cuda.is_available():
-            return False
-        probe = torch.tensor([1.0], device="cuda")
-        _ = (probe + 1).cpu().item()
-        return True
-    except Exception:
-        return False
-
-
-def mps_runtime_works() -> bool:
-    try:
-        import torch
-
-        mps_backend = getattr(torch.backends, "mps", None)
-        if not (mps_backend and mps_backend.is_available()):
-            return False
-        probe = torch.tensor([1.0], device="mps")
-        _ = (probe + 1).cpu().item()
-        return True
-    except Exception:
-        return False
-
-
-def resolve_device(device_preference: str = "auto", cpu_only: bool = False) -> str:
-    if cpu_only:
-        return "cpu"
-    if device_preference == "cuda" and cuda_runtime_works():
-        return "cuda"
-    if device_preference == "mps" and mps_runtime_works():
-        return "mps"
-    if device_preference == "cpu":
-        return "cpu"
-    if cuda_runtime_works():
-        return "cuda"
-    if mps_runtime_works():
-        return "mps"
-    return "cpu"
-
-
 def resolve_backend(backend: str, llama_model_path: str) -> str:
-    if backend in {"torch", "vulkan"}:
-        return backend
-    return "vulkan" if llama_model_path else "torch"
+    normalized_backend = (backend or "vulkan").lower()
+    if normalized_backend == "torch":
+        raise ValueError("torch retriever backend is disabled; use RETRIEVER_BACKEND=vulkan")
+    if normalized_backend not in {"auto", "vulkan"}:
+        raise ValueError(f"Unsupported retriever backend: {backend!r}")
+    if not llama_model_path:
+        raise ValueError("Vulkan backend requires LLAMA_EMBED_MODEL")
+    return "vulkan"
 
 
 def compact_for_reranking(text: str) -> str:
@@ -609,6 +571,7 @@ class OnnxCrossEncoder:
         from transformers import AutoTokenizer
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        errors: list[str] = []
 
         try:
             import onnxruntime as ort
@@ -638,12 +601,17 @@ class OnnxCrossEncoder:
                 self._input_names = {item.name for item in self._session.get_inputs()}
                 self._backend = "onnx"
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(str(exc))
 
-        self._load_transformers_fallback()
+        detail = "; ".join(errors) if errors else "unknown error"
+        raise RuntimeError(
+            "ONNX reranker initialization failed and transformers inference fallback is disabled: "
+            f"{detail}"
+        )
 
     def _export_to_onnx(self, out_dir: Path) -> None:
+        errors: list[str] = []
         try:
             from optimum.onnxruntime import ORTModelForSequenceClassification
 
@@ -653,8 +621,8 @@ class OnnxCrossEncoder:
             )
             model.save_pretrained(str(out_dir))
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"optimum export failed: {exc}")
 
         try:
             import torch
@@ -689,8 +657,11 @@ class OnnxCrossEncoder:
                 dynamic_axes=dynamic_axes,
                 opset_version=14,
             )
-        except Exception:
             return
+        except Exception as exc:
+            errors.append(f"torch onnx export failed: {exc}")
+
+        raise RuntimeError("; ".join(errors))
 
     @staticmethod
     def _quantize_onnx(src: Path, dst: Path) -> Path:
@@ -704,20 +675,11 @@ class OnnxCrossEncoder:
         except Exception:
             return src
 
-    def _load_transformers_fallback(self) -> None:
-        from transformers import AutoModelForSequenceClassification
-
-        device = resolve_device()
-        self._hf_model = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name
-        ).to(device).eval()
-        self._backend = "transformers"
-
     def compute_score(self, pairs: list[list[str]], batch_size: int | None = None) -> list[float]:
         batch_size = batch_size or RERANK_BATCH_SIZE
         if self._backend == "onnx":
             return self._score_onnx(pairs, batch_size)
-        return self._score_transformers(pairs, batch_size)
+        raise RuntimeError("ONNX reranker is not initialized")
 
     def _score_onnx(self, pairs: list[list[str]], batch_size: int) -> list[float]:
         scores: list[float] = []
@@ -744,32 +706,6 @@ class OnnxCrossEncoder:
             )
             scores.extend(batch_scores)
         return scores
-
-    def _score_transformers(self, pairs: list[list[str]], batch_size: int) -> list[float]:
-        import torch
-
-        device = next(self._hf_model.parameters()).device
-        scores: list[float] = []
-        with torch.no_grad():
-            for start in range(0, len(pairs), batch_size):
-                batch = pairs[start : start + batch_size]
-                encoded = self._tokenizer(
-                    [pair[0] for pair in batch],
-                    [pair[1] for pair in batch],
-                    padding=True,
-                    truncation=True,
-                    max_length=RERANK_MAX_LENGTH,
-                    return_tensors="pt",
-                ).to(device)
-                logits = self._hf_model(**encoded).logits
-                batch_scores = (
-                    (logits[:, 1] - logits[:, 0]).cpu().tolist()
-                    if logits.shape[-1] == 2
-                    else logits[:, 0].cpu().tolist()
-                )
-                scores.extend(batch_scores)
-        return scores
-
 
 class BaseRanker:
     def __init__(self) -> None:
@@ -939,50 +875,6 @@ class BaseRanker:
         )
 
 
-class TorchRanker(BaseRanker):
-    def __init__(
-        self,
-        cross_encoder_model: str = CROSS_ENCODER_MODEL,
-        retriever_model: str = RETRIEVER_MODEL,
-        device_preference: str = "auto",
-        cpu_only: bool = False,
-    ) -> None:
-        self.cross_encoder_model_name = cross_encoder_model
-        self.retriever_model_name = retriever_model
-        self.device = resolve_device(device_preference, cpu_only)
-        self.retriever = None
-        super().__init__()
-
-    def _init_models(self) -> None:
-        if self.cross_encoder is None:
-            self.cross_encoder = OnnxCrossEncoder(self.cross_encoder_model_name)
-        self._init_index_models()
-
-    def _init_index_models(self) -> None:
-        if self.retriever is None:
-            from sentence_transformers import SentenceTransformer
-
-            self.retriever = SentenceTransformer(
-                self.retriever_model_name,
-                trust_remote_code=True,
-                device=self.device,
-            )
-
-    def _embed_query(self, query: str) -> np.ndarray:
-        encode_kwargs = {"normalize_embeddings": True}
-        if "query" in (getattr(self.retriever, "prompts", None) or {}):
-            encode_kwargs["prompt_name"] = "query"
-        return self.retriever.encode(query, **encode_kwargs).astype(np.float32)
-
-    def _embed_documents(self, texts: list[str]) -> np.ndarray:
-        return self.retriever.encode(
-            texts,
-            batch_size=RETRIEVER_BATCH_SIZE,
-            normalize_embeddings=True,
-            show_progress_bar=True,
-        ).astype(np.float32)
-
-
 class VulkanRanker(BaseRanker):
     def __init__(
         self,
@@ -998,8 +890,9 @@ class VulkanRanker(BaseRanker):
         self.vulkan_devices = probe_vulkan_devices()
         log_vulkan_device_status(self.vulkan_devices)
         hardware_devices = [device for device in self.vulkan_devices if not device.get("software")]
-        self.main_gpu = hardware_devices[0]["index"] if hardware_devices else None
-        self.gpu_layers = gpu_layers if self.main_gpu is not None else 0
+        preferred_devices = hardware_devices or self.vulkan_devices
+        self.main_gpu = preferred_devices[0]["index"] if preferred_devices else None
+        self.gpu_layers = gpu_layers
         self.cross_encoder_model_name = cross_encoder_model
         llama_kwargs = {
             "model_path": model_path,
@@ -1020,6 +913,9 @@ class VulkanRanker(BaseRanker):
     def _init_models(self) -> None:
         if self.cross_encoder is None:
             self.cross_encoder = OnnxCrossEncoder(self.cross_encoder_model_name)
+
+    def _init_index_models(self) -> None:
+        return None
 
     @staticmethod
     def _extract_embedding(response):
@@ -1268,6 +1164,9 @@ def create_ranker(
 ):
     global _ranker_instance, _ranker_config
 
+    if cpu_only:
+        raise ValueError("CPU-only retriever mode is disabled; use the Vulkan backend")
+
     resolved_backend = resolve_backend(backend, llama_model_path)
     config = (
         resolved_backend,
@@ -1279,15 +1178,9 @@ def create_ranker(
     if _ranker_instance is not None and _ranker_config == config:
         return _ranker_instance
 
-    if resolved_backend == "vulkan":
-        _ranker_instance = VulkanRanker(
-            model_path=llama_model_path,
-            gpu_layers=int(llama_gpu_layers),
-        )
-    else:
-        _ranker_instance = TorchRanker(
-            device_preference=device_preference,
-            cpu_only=cpu_only,
-        )
+    _ranker_instance = VulkanRanker(
+        model_path=llama_model_path,
+        gpu_layers=int(llama_gpu_layers),
+    )
     _ranker_config = config
     return _ranker_instance

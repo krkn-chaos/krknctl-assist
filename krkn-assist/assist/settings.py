@@ -49,9 +49,9 @@ RETRIEVER_BATCH_SIZE = int(os.environ.get("RETRIEVER_BATCH_SIZE", "8"))
 BM25_K1 = float(os.environ.get("BM25_K1", "1.5"))
 BM25_B = float(os.environ.get("BM25_B", "0.75"))
 
-DEFAULT_BACKEND = os.environ.get("RETRIEVER_BACKEND", "auto")
-DEFAULT_DEVICE = os.environ.get("RETRIEVER_DEVICE", "auto")
-DEFAULT_CPU_ONLY = os.environ.get("RETRIEVER_CPU_ONLY", "0") == "1"
+DEFAULT_BACKEND = os.environ.get("RETRIEVER_BACKEND", "vulkan")
+DEFAULT_DEVICE = "auto"
+DEFAULT_CPU_ONLY = False
 DEFAULT_LLAMA_MODEL = os.environ.get("LLAMA_EMBED_MODEL", "")
 DEFAULT_LLAMA_GPU_LAYERS = int(os.environ.get("LLAMA_GPU_LAYERS", "-1"))
 

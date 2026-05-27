@@ -23,6 +23,10 @@ DOCKERFILE_PATH="${KRKNCTL_ASSIST_DOCKERFILE:-}"
 IMAGE_BUILD_BACKEND=""
 CONTAINER_PLATFORM=""
 BUILD_ARGS=()
+VULKAN_RUNTIME_ARGS=()
+VULKAN_MODEL_HOST_PATH=""
+VULKAN_MODEL_CONTAINER_PATH=""
+VULKAN_MODEL_MOUNT_ARGS=()
 LOG_DIR="${KRKNCTL_ASSIST_LOG_DIR:-$ROOT_DIR/setup-logs}"
 LOG_FILE="$LOG_DIR/krknctl-assist-setup-$(date -u +%Y%m%dT%H%M%SZ).log"
 HEALTH_TIMEOUT_SECONDS="${KRKNCTL_ASSIST_HEALTH_TIMEOUT_SECONDS:-600}"
@@ -127,6 +131,114 @@ download_gguf_model() {
     curl_args+=(-H "Authorization: Bearer $HF_TOKEN_VALUE")
   fi
   run curl "${curl_args[@]}" "$url"
+}
+
+mount_label_suffix() {
+  if [[ "$HOST_OS" == "darwin" ]]; then
+    printf ''
+  else
+    printf ':Z'
+  fi
+}
+
+require_vulkan_backend() {
+  local requested_backend="${RETRIEVER_BACKEND:-vulkan}"
+  case "$requested_backend" in
+    ""|auto|vulkan)
+      export RETRIEVER_BACKEND="vulkan"
+      ;;
+    torch)
+      fail "The torch retriever backend is disabled for this branch; use RETRIEVER_BACKEND=vulkan"
+      ;;
+    *)
+      fail "Unsupported RETRIEVER_BACKEND=$requested_backend; use auto or vulkan"
+      ;;
+  esac
+}
+
+ensure_vulkan_model() {
+  if [[ -n "$VULKAN_MODEL_HOST_PATH" && -n "$VULKAN_MODEL_CONTAINER_PATH" ]]; then
+    return
+  fi
+
+  local mount_suffix
+  local model_host_path="${LLAMA_EMBED_MODEL:-$ROOT_DIR/models/$GGUF_FILE}"
+  mount_suffix="$(mount_label_suffix)"
+
+  if [[ "$model_host_path" == /models/* ]]; then
+    model_host_path="$ROOT_DIR/models/$(basename "$model_host_path")"
+  fi
+
+  if [[ ! -f "$model_host_path" ]]; then
+    if [[ "$AUTO_DOWNLOAD_MODEL" != "1" ]]; then
+      fail "Vulkan backend requires GGUF model at $model_host_path or RETRIEVER_AUTO_DOWNLOAD_MODEL=1"
+    fi
+    log "Downloading GGUF embedding model: ${GGUF_REPO}/${GGUF_FILE}"
+    download_gguf_model "$model_host_path"
+  fi
+
+  local model_abs
+  model_abs="$(cd "$(dirname "$model_host_path")" && pwd)/$(basename "$model_host_path")"
+  local model_basename
+  model_basename="$(basename "$model_abs")"
+  if [[ "$(dirname "$model_abs")" != "$ROOT_DIR/models" ]]; then
+    mkdir -p "$ROOT_DIR/models"
+    cp -f "$model_abs" "$ROOT_DIR/models/$model_basename"
+    model_abs="$ROOT_DIR/models/$model_basename"
+  fi
+  VULKAN_MODEL_HOST_PATH="$model_abs"
+  VULKAN_MODEL_CONTAINER_PATH="/models/$model_basename"
+  VULKAN_MODEL_MOUNT_ARGS=(-v "$(dirname "$model_abs"):/models$mount_suffix")
+  export LLAMA_GPU_LAYERS="${LLAMA_GPU_LAYERS:--1}"
+}
+
+configure_vulkan_runtime_args() {
+  VULKAN_RUNTIME_ARGS=()
+
+  if [[ "$HOST_OS" == "darwin" ]]; then
+    VULKAN_RUNTIME_ARGS=(--device /dev/dri)
+    return
+  fi
+
+  local added_device=0
+  if [[ -e /dev/dri ]]; then
+    VULKAN_RUNTIME_ARGS+=(--device /dev/dri)
+    added_device=1
+  fi
+
+  if [[ -e /dev/kfd ]]; then
+    VULKAN_RUNTIME_ARGS+=(--device /dev/kfd)
+    added_device=1
+  fi
+
+  if [[ -e /dev/dxg ]]; then
+    VULKAN_RUNTIME_ARGS+=(--device /dev/dxg)
+    added_device=1
+    if [[ -d /usr/lib/wsl ]]; then
+      VULKAN_RUNTIME_ARGS+=(
+        -v /usr/lib/wsl:/usr/lib/wsl:ro
+        -e "LD_LIBRARY_PATH=/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}"
+      )
+    fi
+  fi
+
+  local nvidia_dev
+  for nvidia_dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset /dev/nvidia[0-9]*; do
+    if [[ -e "$nvidia_dev" ]]; then
+      VULKAN_RUNTIME_ARGS+=(--device "$nvidia_dev")
+      added_device=1
+    fi
+  done
+
+  if [[ "$added_device" == "1" ]]; then
+    VULKAN_RUNTIME_ARGS+=(
+      --group-add keep-groups
+      --security-opt=label=disable
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+    )
+  else
+    warn "No host GPU device nodes detected; Vulkan will rely on the container's available Vulkan devices"
+  fi
 }
 
 stop_stale_krknctl_processes() {
@@ -337,12 +449,18 @@ image_matches_checkout() {
   local status=$?
   set -e
   rm -f "$host_file" "$image_file"
-  return "$status"
+  [[ "$status" -eq 0 ]] || return "$status"
+
+  local image_backend
+  image_backend="$(podman run --rm --entrypoint sh "$IMAGE" -c 'printf "%s" "${GGML_BACKEND_BUILT:-}"' 2>/dev/null || true)"
+  [[ "$image_backend" == "vulkan" ]] || return 1
+
+  podman run --rm --entrypoint sh "$IMAGE" -c 'test "${RETRIEVER_BACKEND:-}" = "vulkan" && test -n "${LLAMA_EMBED_MODEL:-}" && test -f "$LLAMA_EMBED_MODEL"' >/dev/null 2>&1 || return 1
 }
 
 configure_image_build() {
   local podman_platform
-  local requested_backend="${RETRIEVER_BACKEND:-auto}"
+  require_vulkan_backend
   podman_platform="$(podman info --format '{{.Host.OS}}/{{.Host.Arch}}' 2>/dev/null || true)"
 
   if [[ -z "$DOCKERFILE_PATH" ]]; then
@@ -376,25 +494,16 @@ configure_image_build() {
     esac
   fi
 
-  case "$requested_backend" in
-    vulkan)
-      IMAGE_BUILD_BACKEND="vulkan"
-      ;;
-    auto)
-      if [[ "$HOST_OS" == "darwin" ]]; then
-        IMAGE_BUILD_BACKEND="vulkan"
-      else
-        IMAGE_BUILD_BACKEND="cpu"
-      fi
-      ;;
-    *)
-      IMAGE_BUILD_BACKEND="cpu"
-      ;;
-  esac
+  IMAGE_BUILD_BACKEND="vulkan"
+  local model_basename="${GGUF_FILE}"
+  if [[ -n "${LLAMA_EMBED_MODEL:-}" ]]; then
+    model_basename="$(basename "$LLAMA_EMBED_MODEL")"
+  fi
 
   BUILD_ARGS=(
     --platform "$CONTAINER_PLATFORM"
     --build-arg "GGML_BACKEND=$IMAGE_BUILD_BACKEND"
+    --build-arg "LLAMA_EMBED_MODEL=/models/$model_basename"
   )
 }
 
@@ -403,55 +512,17 @@ build_image() {
 }
 
 warm_index_assets() {
-  local mount_suffix=""
+  local mount_suffix
   local warm_index_dir="faiss-index.warm"
   local warm_index_path="$ROOT_DIR/krkn-assist/$warm_index_dir"
   local final_index_path="$ROOT_DIR/krkn-assist/faiss-index"
-  local warm_backend="${RETRIEVER_BACKEND:-}"
-  local warm_model_host_path="${LLAMA_EMBED_MODEL:-}"
-  local warm_model_container_path=""
-  local warm_mount_args=()
-  local warm_run_args=()
-  if [[ "$HOST_OS" != "darwin" ]]; then
-    mount_suffix=":Z"
-  fi
-
-  if [[ -z "$warm_backend" ]]; then
-    if [[ "$HOST_OS" == "darwin" ]]; then
-      warm_backend="vulkan"
-    else
-      warm_backend="torch"
-    fi
-  fi
-
-  if [[ "$warm_backend" == "vulkan" ]]; then
-    if [[ -z "$warm_model_host_path" ]]; then
-      warm_model_host_path="$ROOT_DIR/models/$GGUF_FILE"
-    fi
-
-    if [[ ! -f "$warm_model_host_path" ]]; then
-      if [[ "$AUTO_DOWNLOAD_MODEL" != "1" ]]; then
-        fail "Warm index requires GGUF model at $warm_model_host_path or RETRIEVER_AUTO_DOWNLOAD_MODEL=1"
-      fi
-      log "Downloading GGUF embedding model for warm index: ${GGUF_REPO}/${GGUF_FILE}"
-      download_gguf_model "$warm_model_host_path"
-    fi
-
-    local warm_model_abs
-    warm_model_abs="$(cd "$(dirname "$warm_model_host_path")" && pwd)/$(basename "$warm_model_host_path")"
-    local warm_model_basename
-    warm_model_basename="$(basename "$warm_model_abs")"
-    warm_model_container_path="/models/$warm_model_basename"
-    warm_mount_args=(-v "$(dirname "$warm_model_abs"):/models$mount_suffix")
-
-    if [[ "$HOST_OS" == "darwin" ]]; then
-      warm_run_args=(--device /dev/dri)
-    fi
-  fi
+  mount_suffix="$(mount_label_suffix)"
+  ensure_vulkan_model
+  configure_vulkan_runtime_args
 
   mkdir -p "$HF_CACHE_DIR" "$TORCH_CACHE_DIR"
   rm -rf "$warm_index_path"
-  log "Precomputing FAISS assets before final image build (backend=$warm_backend)"
+  log "Precomputing FAISS assets before final image build (backend=vulkan)"
 
   local env_args=(
     -e "GITHUB_REPO=$GITHUB_REPO"
@@ -462,20 +533,18 @@ warm_index_assets() {
     -e "HF_HOME=/root/.cache/huggingface"
     -e "SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface"
     -e "TORCH_HOME=/root/.cache/torch"
-    -e "RETRIEVER_BACKEND=$warm_backend"
+    -e "RETRIEVER_BACKEND=vulkan"
+    -e "LLAMA_EMBED_MODEL=$VULKAN_MODEL_CONTAINER_PATH"
+    -e "LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:--1}"
     -e "LOG_LEVEL=WARNING"
     -e "TRANSFORMERS_VERBOSITY=error"
     -e "HF_HUB_DISABLE_PROGRESS_BARS=1"
     -e "TOKENIZERS_PARALLELISM=false"
   )
   local passthrough_vars=(
-    RETRIEVER_BACKEND
     RETRIEVER_MODEL
     RETRIEVER_DEVICE
-    RETRIEVER_CPU_ONLY
     CROSS_ENCODER_MODEL
-    LLAMA_EMBED_MODEL
-    LLAMA_GPU_LAYERS
     RELEVANCE_THRESHOLD
     MIN_MATCH_SCORE
     MIN_FAISS_SCORE
@@ -491,9 +560,6 @@ warm_index_assets() {
       env_args+=(-e "$env_name=${!env_name}")
     fi
   done
-  if [[ -n "$warm_model_container_path" ]]; then
-    env_args+=(-e "LLAMA_EMBED_MODEL=$warm_model_container_path")
-  fi
   if [[ -n "$KRKN_HUB_BRANCH" ]]; then
     env_args+=(-e "KRKN_HUB_BRANCH=$KRKN_HUB_BRANCH")
   fi
@@ -509,11 +575,11 @@ warm_index_assets() {
 
   log "Running warm index container; detailed indexing output is in $LOG_FILE"
   if ! podman run --rm \
-    ${warm_run_args[@]+"${warm_run_args[@]}"} \
+    ${VULKAN_RUNTIME_ARGS[@]+"${VULKAN_RUNTIME_ARGS[@]}"} \
     -v "$ROOT_DIR/krkn-assist:/app$mount_suffix" \
     -v "$HF_CACHE_DIR:/root/.cache/huggingface$mount_suffix" \
     -v "$TORCH_CACHE_DIR:/root/.cache/torch$mount_suffix" \
-    ${warm_mount_args[@]+"${warm_mount_args[@]}"} \
+    ${VULKAN_MODEL_MOUNT_ARGS[@]+"${VULKAN_MODEL_MOUNT_ARGS[@]}"} \
     ${env_args[@]+"${env_args[@]}"} \
     -w /app \
     "$IMAGE" \
@@ -547,6 +613,7 @@ build_assist_image() {
     warn "Existing $IMAGE does not match this checkout; rebuilding"
   fi
 
+  ensure_vulkan_model
   log "Building bootstrap image from repo root so Dockerfile COPY paths resolve"
   build_image
   warm_index_assets
@@ -576,15 +643,18 @@ smoke_test_image() {
   SMOKE_CONTAINER="krknctl-assist-smoke-$$"
   podman rm -f "$SMOKE_CONTAINER" >>"$LOG_FILE" 2>&1 || true
 
-  local env_args=()
+  ensure_vulkan_model
+  configure_vulkan_runtime_args
+
+  local env_args=(
+    -e "RETRIEVER_BACKEND=vulkan"
+    -e "LLAMA_EMBED_MODEL=$VULKAN_MODEL_CONTAINER_PATH"
+    -e "LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:--1}"
+  )
   local passthrough_vars=(
-    RETRIEVER_BACKEND
     RETRIEVER_MODEL
     RETRIEVER_DEVICE
-    RETRIEVER_CPU_ONLY
     CROSS_ENCODER_MODEL
-    LLAMA_EMBED_MODEL
-    LLAMA_GPU_LAYERS
     RELEVANCE_THRESHOLD
     MIN_MATCH_SCORE
     MIN_FAISS_SCORE
@@ -603,6 +673,8 @@ smoke_test_image() {
 
   local container_id
   container_id="$(podman run -d --name "$SMOKE_CONTAINER" \
+    ${VULKAN_RUNTIME_ARGS[@]+"${VULKAN_RUNTIME_ARGS[@]}"} \
+    ${VULKAN_MODEL_MOUNT_ARGS[@]+"${VULKAN_MODEL_MOUNT_ARGS[@]}"} \
     ${env_args[@]+"${env_args[@]}"} \
     -p 127.0.0.1:8080:8080 "$IMAGE")" \
     || fail "Unable to start smoke-test container"
@@ -615,15 +687,28 @@ smoke_test_image() {
     fail "Assist image did not become healthy within ${HEALTH_TIMEOUT_SECONDS}s"
   fi
 
-  local response
-  response="$(curl -fsS -X POST http://127.0.0.1:8080/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d "$(python3 - "$QUERY" <<'PY'
+  local request_body
+  request_body="$(python3 - "$QUERY" <<'PY'
 import json
 import sys
 print(json.dumps({"messages": [{"role": "user", "content": sys.argv[1]}]}))
 PY
-)")" || fail "Compat API smoke query failed"
+)"
+
+  local response=""
+  local query_attempt
+  for query_attempt in 1 2 3; do
+    if response="$(curl -fsS -X POST http://127.0.0.1:8080/v1/chat/completions \
+      -H "Content-Type: application/json" \
+      -d "$request_body")"; then
+      break
+    fi
+    warn "Compat API smoke query failed on attempt $query_attempt"
+    podman logs "$SMOKE_CONTAINER" 2>&1 | tail -n 120 | tee -a "$LOG_FILE" || true
+    sleep 5
+  done
+
+  [[ -n "$response" ]] || fail "Compat API smoke query failed"
 
   printf '%s\n' "$response" >>"$LOG_FILE"
   set +e
