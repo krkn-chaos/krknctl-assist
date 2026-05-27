@@ -7,19 +7,14 @@ A natural language based chaos scenario discovery assistant
 
 `krknctl-assist` makes scenario discovery faster by translating plain-English testing intent into relevant scenario recommendations. It works alongside [krknctl](https://krkn-chaos.dev/docs/krknctl/) by providing:
 
-- **Natural-language queries** — Ask in plain English, get relevant scenario matches
-- **Local execution** — Runs locally via container runtime (no hosted dependency)
-- **Seamless integration** — Works neatly in your `krknctl` workflow
+- **Natural-language queries** - Ask in plain English, get relevant scenario matches
+- **Local execution** - Runs locally via container runtime (no hosted dependency)
+- **Seamless integration** - Works neatly in your `krknctl` workflow
 
 ## Quick Start
 
 ### Prerequisites
-
-- `podman`
-- `git`
-- `curl`
-- `python3`
-- `go`
+`podman`, `python3`, `go`
 
 ### Install
 
