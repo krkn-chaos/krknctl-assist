@@ -16,8 +16,6 @@ CE_TOP2_GAP_THRESHOLD = 1.0
 FINAL_CE_WEIGHT = 0.6
 FINAL_FAISS_WEIGHT = 0.2
 FINAL_BM25_WEIGHT = 0.2
-FINAL_LEXICAL_WEIGHT = float(os.environ.get("FINAL_LEXICAL_WEIGHT", "0"))
-FINAL_INTENT_WEIGHT = float(os.environ.get("FINAL_INTENT_WEIGHT", "0"))
 MIN_QUERY_WORDS = 4
 RERANK_SCORE_FLOOR = float(os.environ.get("RERANK_SCORE_FLOOR", "-11.47"))
 RERANK_SCORE_CEILING = float(os.environ.get("RERANK_SCORE_CEILING", "9.0"))
@@ -44,7 +42,7 @@ INDEX_CHUNK_SIZE_CHARS = int(os.environ.get("INDEX_CHUNK_SIZE_CHARS", "1200"))
 INDEX_CHUNK_OVERLAP_CHARS = int(os.environ.get("INDEX_CHUNK_OVERLAP_CHARS", "200"))
 INDEX_SCENARIO_CHUNKS = os.environ.get("INDEX_SCENARIO_CHUNKS", "1") == "1"
 RERANK_SUPPORT_PASSAGES = int(os.environ.get("RERANK_SUPPORT_PASSAGES", "2"))
-RETRIEVER_BATCH_SIZE = int(os.environ.get("RETRIEVER_BATCH_SIZE", "8"))
+
 
 BM25_K1 = float(os.environ.get("BM25_K1", "1.5"))
 BM25_B = float(os.environ.get("BM25_B", "0.75"))
@@ -86,8 +84,4 @@ NON_SCENARIO_DOCS = {
     "aggregated_docs.md",
 }
 
-EXCLUDED_SCENARIO_IDS = {
-    item.strip()
-    for item in os.environ.get("EXCLUDED_SCENARIO_IDS", "dummy-scenario").split(",")
-    if item.strip()
-}
+
