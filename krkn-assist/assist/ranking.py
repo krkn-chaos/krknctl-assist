@@ -484,7 +484,7 @@ def _build_index_entries(docs: list[tuple[str, str]]) -> list[IndexEntry]:
                 scenario_id=scenario_id,
                 chunk_id=f"{scenario_id}::overview",
                 passage=overview,
-                text=search_text,
+                text=f"{synopsis}\n\nOverview:\n{overview}",
             )
         )
         if not INDEX_SCENARIO_CHUNKS:
@@ -529,15 +529,42 @@ def _scenario_support_text(
     return compact_for_reranking("\n\n".join(parts))
 
 
+def cuda_runtime_works() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+def mps_runtime_works() -> bool:
+    try:
+        import torch
+        return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    except Exception:
+        return False
+
+
+def resolve_device(device_preference: str = "auto", cpu_only: bool = False) -> str:
+    if cpu_only:
+        return "cpu"
+    if device_preference == "cuda" and cuda_runtime_works():
+        return "cuda"
+    if device_preference == "mps" and mps_runtime_works():
+        return "mps"
+    if device_preference == "cpu":
+        return "cpu"
+    if cuda_runtime_works():
+        return "cuda"
+    if mps_runtime_works():
+        return "mps"
+    return "cpu"
+
+
 def resolve_backend(backend: str, llama_model_path: str) -> str:
-    normalized_backend = (backend or "vulkan").lower()
-    if normalized_backend == "torch":
-        raise ValueError("torch retriever backend is disabled; use RETRIEVER_BACKEND=vulkan")
-    if normalized_backend not in {"auto", "vulkan"}:
-        raise ValueError(f"Unsupported retriever backend: {backend!r}")
-    if not llama_model_path:
-        raise ValueError("Vulkan backend requires LLAMA_EMBED_MODEL")
-    return "vulkan"
+    if backend in {"torch", "vulkan"}:
+        return backend
+    return "vulkan" if llama_model_path else "torch"
 
 
 def compact_for_reranking(text: str) -> str:
@@ -875,6 +902,48 @@ class BaseRanker:
         )
 
 
+class TorchRanker(BaseRanker):
+    def __init__(
+        self,
+        cross_encoder_model: str = CROSS_ENCODER_MODEL,
+        retriever_model: str = RETRIEVER_MODEL,
+        device_preference: str = "auto",
+        cpu_only: bool = False,
+    ) -> None:
+        self.cross_encoder_model_name = cross_encoder_model
+        self.retriever_model_name = retriever_model
+        self.device = resolve_device(device_preference, cpu_only)
+        self.retriever = None
+        super().__init__()
+
+    def _init_models(self) -> None:
+        if self.cross_encoder is None:
+            self.cross_encoder = OnnxCrossEncoder(self.cross_encoder_model_name)
+        if self.retriever is None:
+            from sentence_transformers import SentenceTransformer
+
+            self.retriever = SentenceTransformer(
+                self.retriever_model_name,
+                trust_remote_code=True,
+                device=self.device,
+            )
+
+    def _embed_query(self, query: str) -> np.ndarray:
+        return self.retriever.encode(
+            query,
+            normalize_embeddings=True,
+            prompt_name="query",
+        ).astype(np.float32)
+
+    def _embed_documents(self, texts: list[str]) -> np.ndarray:
+        return self.retriever.encode(
+            texts,
+            batch_size=16,
+            normalize_embeddings=True,
+            show_progress_bar=True,
+        ).astype(np.float32)
+
+
 class VulkanRanker(BaseRanker):
     def __init__(
         self,
@@ -1131,7 +1200,6 @@ def run_retrieval(
         else:
             row["final_score"] = base_final_score
     results.sort(key=lambda row: row["final_score"], reverse=True)
-    results = _filter_conflicting_intent_results(query, results, doc_texts)
 
     total_ms = (time.perf_counter() - started) * 1000
     final_results = results[:rerank_k]
@@ -1164,9 +1232,6 @@ def create_ranker(
 ):
     global _ranker_instance, _ranker_config
 
-    if cpu_only:
-        raise ValueError("CPU-only retriever mode is disabled; use the Vulkan backend")
-
     resolved_backend = resolve_backend(backend, llama_model_path)
     config = (
         resolved_backend,
@@ -1178,9 +1243,15 @@ def create_ranker(
     if _ranker_instance is not None and _ranker_config == config:
         return _ranker_instance
 
-    _ranker_instance = VulkanRanker(
-        model_path=llama_model_path,
-        gpu_layers=int(llama_gpu_layers),
-    )
+    if resolved_backend == "vulkan":
+        _ranker_instance = VulkanRanker(
+            model_path=llama_model_path,
+            gpu_layers=int(llama_gpu_layers),
+        )
+    else:
+        _ranker_instance = TorchRanker(
+            device_preference=device_preference,
+            cpu_only=cpu_only,
+        )
     _ranker_config = config
     return _ranker_instance

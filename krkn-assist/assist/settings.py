@@ -10,7 +10,7 @@ RETRIEVER_MODEL = os.environ.get(
     "Qwen/Qwen3-Embedding-0.6B",
 )
 
-MIN_FAISS_SCORE = float(os.environ.get("MIN_FAISS_SCORE", "0.30"))
+MIN_FAISS_SCORE = float(os.environ.get("MIN_FAISS_SCORE", "0.23"))
 FAISS_TOP2_GAP_THRESHOLD = 0.07
 CE_TOP2_GAP_THRESHOLD = 1.0
 FINAL_CE_WEIGHT = 0.6
@@ -23,7 +23,7 @@ RERANK_SCORE_FLOOR = float(os.environ.get("RERANK_SCORE_FLOOR", "-11.47"))
 RERANK_SCORE_CEILING = float(os.environ.get("RERANK_SCORE_CEILING", "9.0"))
 RERANK_TOP_FRACTION = float(os.environ.get("RERANK_TOP_FRACTION", "0.25"))
 MIN_CE_SCORE = float(os.environ.get("MIN_CE_SCORE", "-7.0"))
-MIN_MATCH_SCORE = float(os.environ.get("MIN_MATCH_SCORE", "0.30"))
+MIN_MATCH_SCORE = float(os.environ.get("MIN_MATCH_SCORE", "0.10"))
 MIN_MULTI_SCORE = float(os.environ.get("MIN_MULTI_SCORE", "0.28"))
 MULTI_MATCH_SCORE_GAP = float(os.environ.get("MULTI_MATCH_SCORE_GAP", "0.08"))
 MAX_MULTI_SCENARIOS = int(os.environ.get("MAX_MULTI_SCENARIOS", "2"))
@@ -42,14 +42,14 @@ RETRIEVAL_CANDIDATE_K = int(os.environ.get("RETRIEVAL_CANDIDATE_K", "24"))
 VECTOR_SEARCH_MULTIPLIER = int(os.environ.get("VECTOR_SEARCH_MULTIPLIER", "6"))
 INDEX_CHUNK_SIZE_CHARS = int(os.environ.get("INDEX_CHUNK_SIZE_CHARS", "1200"))
 INDEX_CHUNK_OVERLAP_CHARS = int(os.environ.get("INDEX_CHUNK_OVERLAP_CHARS", "200"))
-INDEX_SCENARIO_CHUNKS = os.environ.get("INDEX_SCENARIO_CHUNKS", "0") == "1"
+INDEX_SCENARIO_CHUNKS = os.environ.get("INDEX_SCENARIO_CHUNKS", "1") == "1"
 RERANK_SUPPORT_PASSAGES = int(os.environ.get("RERANK_SUPPORT_PASSAGES", "2"))
 RETRIEVER_BATCH_SIZE = int(os.environ.get("RETRIEVER_BATCH_SIZE", "8"))
 
 BM25_K1 = float(os.environ.get("BM25_K1", "1.5"))
 BM25_B = float(os.environ.get("BM25_B", "0.75"))
 
-DEFAULT_BACKEND = os.environ.get("RETRIEVER_BACKEND", "vulkan")
+DEFAULT_BACKEND = os.environ.get("RETRIEVER_BACKEND", "auto")
 DEFAULT_DEVICE = "auto"
 DEFAULT_CPU_ONLY = False
 DEFAULT_LLAMA_MODEL = os.environ.get("LLAMA_EMBED_MODEL", "")
