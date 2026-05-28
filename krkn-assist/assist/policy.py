@@ -133,7 +133,8 @@ def decide_scenarios(
     timing_ms = int(top_timing.get("total")) if "total" in top_timing else None
 
     top_faiss = float(top.get("retrieval_score", 0.0))
-    if top_faiss < MIN_FAISS_SCORE:
+    top_final = float(top.get("final_score", 0.0))
+    if top_faiss < MIN_FAISS_SCORE and top_final < max(threshold, MIN_MULTI_SCORE):
         return PolicyDecision(
             accepted=False,
             reason="min_faiss_score",
@@ -141,7 +142,6 @@ def decide_scenarios(
             timing_ms=timing_ms,
         )
 
-    top_final = float(top.get("final_score", 0.0))
     if top_final < threshold:
         return PolicyDecision(
             accepted=False,

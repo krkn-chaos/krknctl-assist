@@ -63,6 +63,113 @@ class IndexEntry:
     passage: str
 
 
+_SCENARIO_PROFILE_HINTS = {
+    "application-outages": (
+        "Use for application-level outages, route or URL downtime, 503/gateway timeout, "
+        "and ingress or egress traffic blocks that make application pods unreachable."
+    ),
+    "container-scenarios": (
+        "Use for killing, hanging, restarting, or disrupting a specific container process "
+        "inside a pod while the parent pod object remains in scope."
+    ),
+    "kubevirt-outage": (
+        "Use for KubeVirt, VM, VMI, virtual machine deletion, virtualized workload outage, "
+        "or CNV/OpenShift virtualization failure testing."
+    ),
+    "network-chaos": (
+        "Use for host or node network degradation with latency, jitter, packet loss, "
+        "bandwidth throttling, ingress/egress shaping, tc, or netem."
+    ),
+    "node-cpu-hog": (
+        "Use for node CPU pressure, CPU hogs, high core usage, processor saturation, "
+        "or stress-ng CPU load on worker nodes."
+    ),
+    "node-io-hog": (
+        "Use for node disk I/O pressure, heavy reads or writes, storage bus saturation, "
+        "I/O hogs, and write-byte stress on nodes."
+    ),
+    "node-memory-hog": (
+        "Use for node memory pressure, RAM exhaustion, OOM conditions, heap leaks, "
+        "and memory hogs on worker nodes."
+    ),
+    "node-network-filter": (
+        "Use for node or host iptables filtering, blocking node ingress or egress, "
+        "ports, protocols, interfaces, host firewalls, and unreachable nodes."
+    ),
+    "node-scenarios": (
+        "Use for node reboot, stop, start, termination, cloud instance replacement, "
+        "kubelet stop-start, and cloud-provider node lifecycle faults."
+    ),
+    "node-scenarios-bm": (
+        "Use for bare-metal node outage, IPMI/BMC fencing, physical server freeze, "
+        "hardware disruption, and out-of-band recovery drills."
+    ),
+    "pod-network-chaos": (
+        "Use for pod network outage or isolation using ingress/egress traffic type, "
+        "pod ports, OVS flow rules, and blocking pod connectivity."
+    ),
+    "pod-network-filter": (
+        "Use for pod-level iptables filtering, privileged network filter workloads, "
+        "ports, protocols, interfaces, TCP/UDP filtering, and pod firewalls."
+    ),
+    "pod-scenarios": (
+        "Use for pod deletion, pod failure, pod crash, eviction, killing pods, "
+        "replica recovery, and workload rescheduling after pods disappear."
+    ),
+    "power-outages": (
+        "Use for cluster-wide power loss, cluster shutdown, infrastructure goes dark, "
+        "facility electricity failure, and disaster recovery power drills."
+    ),
+    "pvc-scenarios": (
+        "Use for filling a PVC, persistent volume claim disk-full tests, NoSpaceLeftOnDevice, "
+        "storage quota exhaustion, and runaway logging consuming a mounted volume."
+    ),
+    "service-disruption-scenarios": (
+        "Use for service object deletion or service disruption in a namespace, deleting "
+        "resources by label, namespace/project disruption, and GitOps rebuild drills."
+    ),
+    "service-hijacking": (
+        "Use for service hijacking, fake or spoofed HTTP responses, mocked payloads, "
+        "man-in-the-middle service replies, and rerouting internal service traffic."
+    ),
+    "syn-flood": (
+        "Use for TCP SYN flood, half-open connection floods, layer-4 DDoS, botnet-like "
+        "connection surges, and connection tracking exhaustion."
+    ),
+    "time-scenarios": (
+        "Use for time skew, clock drift, date changes, NTP/synchronization faults, "
+        "certificate validity time issues, and server clock jumps."
+    ),
+    "zone-outages": (
+        "Use for availability-zone outage, AZ failure, regional zone partition, subnet "
+        "isolation, data-center zone failure, and cloud zone connectivity loss."
+    ),
+}
+
+_GENERIC_PARAMETER_NAMES = {
+    "aws-access-key-id",
+    "aws-default-region",
+    "aws-secret-access-key",
+    "azure-client-id",
+    "azure-client-secret",
+    "azure-subscription-id",
+    "azure-tenant",
+    "chaos-duration",
+    "duration",
+    "gcp-application-credentials",
+    "image",
+    "namespace",
+    "service-account",
+    "taints",
+    "timeout",
+    "wait-duration",
+}
+
+_SCHEMA_FINAL_WEIGHT = 0.42
+_SCHEMA_CANDIDATE_WEIGHT = 0.45
+_MAX_SECTION_ENTRIES_PER_SCENARIO = 4
+
+
 def probe_vulkan_devices() -> list[dict]:
     devices: list[dict] = []
     try:
@@ -192,6 +299,138 @@ def _bm25_scores(query: str, doc_ids: list[str], doc_texts: dict[str, str]) -> d
     return scores
 
 
+def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _schema_scores(query: str, scenario_ids: list[str]) -> dict[str, float]:
+    normalized_query = re.sub(r"\s+", " ", (query or "").lower())
+    query_terms = set(_tokenize(normalized_query))
+    scores = {scenario_id: 0.0 for scenario_id in scenario_ids}
+
+    def boost(scenario_id: str, score: float = 1.0) -> None:
+        if scenario_id in scores:
+            scores[scenario_id] = max(scores[scenario_id], score)
+
+    if {"container", "containers", "sidecar"} & query_terms:
+        boost("container-scenarios")
+    if "kubevirt" in query_terms or "vmi" in query_terms or "vm" in query_terms or _contains_any(
+        normalized_query,
+        ("virtual machine", "virtualized", "cnv", "kill count"),
+    ):
+        boost("kubevirt-outage")
+    if "timeout" in query_terms and {"iteration", "iterations"} & query_terms and "namespace" in query_terms:
+        boost("kubevirt-outage", 0.95)
+    if "syn" in query_terms or _contains_any(
+        normalized_query,
+        ("half-open", "connection flood", "tcp flood", "ddos"),
+    ):
+        boost("syn-flood")
+    if "pvc" in query_terms or _contains_any(
+        normalized_query,
+        ("persistent volume claim", "disk fill", "full disk", "fills up", "fill pvc", "nospaceleft", "no space left", "storage quota"),
+    ):
+        boost("pvc-scenarios")
+    if "cpu" in query_terms or _contains_any(
+        normalized_query,
+        ("processor", "core usage", "hardware threads", "computation cycles"),
+    ):
+        boost("node-cpu-hog")
+    if "memory" in query_terms or "ram" in query_terms or _contains_any(
+        normalized_query,
+        ("oom", "heap leak", "free ram", "physical memory"),
+    ):
+        boost("node-memory-hog")
+    if "i/o" in normalized_query or _contains_any(
+        normalized_query,
+        ("disk stress", "disk pressure", "storage bus", "sequential writes", "read latency", "write bytes"),
+    ):
+        boost("node-io-hog")
+    if _contains_any(normalized_query, ("bare metal", "baremetal", "ipmi", "bmc", "physical hardware", "rack server", "fencing")):
+        boost("node-scenarios-bm")
+    if _contains_any(normalized_query, ("power", "electricity", "cluster shutdown", "cluster goes dark", "facility failure", "disaster recovery")):
+        boost("power-outages")
+    if "zone" in query_terms or "az" in query_terms or _contains_any(
+        normalized_query,
+        ("availability zone", "data center", "datacenter", "subnet", "regional zone"),
+    ):
+        boost("zone-outages")
+    if "time" in query_terms or "clock" in query_terms or "date" in query_terms or _contains_any(
+        normalized_query,
+        ("skew", "drift", "ntp", "synchronization", "server clock"),
+    ):
+        boost("time-scenarios")
+    if _contains_any(normalized_query, ("hijack", "fake", "spoof", "mock", "man-in-the-middle", "wrong mime", "custom 500", "custom 404")):
+        boost("service-hijacking")
+    if "service" in query_terms and {"disruption", "chaos", "delete", "deleting", "objects", "resources"} & query_terms:
+        boost("service-disruption-scenarios")
+    if _contains_any(normalized_query, ("service disruption", "service chaos", "delete service", "deleting service")):
+        boost("service-disruption-scenarios")
+    if "pod" in query_terms or "pods" in query_terms:
+        if {"filter", "iptables", "protocol", "protocols", "tcp", "udp", "port", "ports", "eth0"} & query_terms:
+            boost("pod-network-filter")
+        if _contains_any(normalized_query, ("network disruptions on pods", "block ingress on pod", "block egress on pod")):
+            boost("pod-network-filter")
+        if _contains_any(normalized_query, ("pod network chaos", "pod network outage", "network isolation for pods", "ovs pod", "pod traffic", "block pod ingress", "block pod egress")) or (
+            _contains_any(normalized_query, ("for pods with label",))
+            and not ({"container", "containers"} & query_terms)
+        ):
+            boost("pod-network-chaos")
+        elif {"network", "traffic", "ingress", "egress", "isolation", "block", "blocking", "outbound"} & query_terms:
+            boost("pod-network-chaos", 0.45)
+        if {"delete", "deleting", "failure", "crash", "evict", "eviction", "kill", "terminating", "termination"} & query_terms and not ({"container", "containers"} & query_terms):
+            boost("pod-scenarios")
+    if "node" in query_terms or "nodes" in query_terms or "host" in query_terms or "worker" in query_terms or "master" in query_terms:
+        if {"filter", "iptables", "protocol", "protocols", "tcp", "udp", "port", "ports", "interface", "interfaces", "eth0"} & query_terms:
+            boost("node-network-filter", 0.95)
+        if {"latency", "loss", "bandwidth", "jitter", "degradation", "network", "egress", "ingress"} & query_terms:
+            boost("network-chaos", 0.9)
+        if {"reboot", "start", "stop", "termination", "terminate", "replace", "kubelet"} & query_terms:
+            boost("node-scenarios")
+        if _contains_any(normalized_query, ("node chaos", "node outage")) and not (
+            {"reboot", "start", "stop", "termination", "terminate", "filter", "port", "latency", "loss", "bandwidth"} & query_terms
+        ):
+            boost("node-scenarios-bm", 0.9)
+    if _contains_any(normalized_query, ("latency", "packet loss", "bandwidth", "jitter", "network degradation", "network fault", "bad switch", "uplink")):
+        boost("network-chaos", 0.9)
+    if (
+        {"ingress", "egress", "traffic", "block", "blocking"} & query_terms
+        and not ({"pod", "pods", "node", "nodes", "host"} & query_terms)
+    ):
+        boost("network-chaos")
+    if "port" in query_terms and {"ingress", "egress", "block", "blocking"} & query_terms and not ({"pod", "pods"} & query_terms):
+        boost("node-network-filter")
+    if _contains_any(normalized_query, ("network filter", "pod filter")) and not ({"node", "nodes", "host"} & query_terms):
+        boost("pod-network-filter")
+    if {"interface", "interfaces", "eth0", "eth1"} & query_terms and {"block", "blocking", "traffic", "network"} & query_terms and not ({"pod", "pods"} & query_terms):
+        boost("node-network-filter")
+    if "namespace" in query_terms and {"ingress", "egress", "traffic", "block", "blocking", "outage"} & query_terms and not (
+        {"node", "nodes", "host", "latency", "loss", "bandwidth", "jitter", "filter", "port"} & query_terms
+    ):
+        boost("application-outages")
+    if (
+        {"application", "app", "web", "frontend", "route", "url", "external", "user", "users"} & query_terms
+        and {"outage", "block", "blocking", "traffic", "unreachable", "ingress", "egress"} & query_terms
+    ):
+        boost("application-outages")
+    if _contains_any(normalized_query, ("pods labeled app", "pods labeled service", "pods with label app", "target pods with label app")) and {
+        "traffic",
+        "block",
+        "blocking",
+        "blockage",
+        "ingress",
+        "egress",
+        "fault",
+    } & query_terms:
+        boost("application-outages")
+    if _contains_any(normalized_query, ("application outage", "app outage", "web app", "frontend service", "public url", "503", "gateway timeout")):
+        boost("application-outages")
+    if _contains_any(normalized_query, ("fault injection scenario", "container failure experiment")):
+        boost("container-scenarios")
+
+    return scores
+
+
 def _normalize_score(score: float, min_value: float, max_value: float) -> float:
     if max_value <= min_value:
         return 1.0 if score > 0 else 0.0
@@ -237,12 +476,26 @@ def _scenario_aliases(scenario_id: str, title: str) -> list[str]:
 
 def _summary_paragraph(text: str) -> str:
     body = _strip_frontmatter(text)
+    body = re.sub(r"<!--.*?-->", " ", body, flags=re.DOTALL)
     body = re.sub(r"```.*?```", " ", body, flags=re.DOTALL)
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     for paragraph in paragraphs:
-        cleaned = re.sub(r"\s+", " ", paragraph).strip()
-        if cleaned:
-            return cleaned[:600]
+        lines = []
+        for line in paragraph.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("|") or re.match(r"^[-:| ]+$", stripped):
+                continue
+            if re.match(r"^#{1,6}\s+", stripped):
+                continue
+            if stripped.lower().startswith(("can also set any global variable", "to see all available")):
+                continue
+            lines.append(stripped)
+        cleaned = re.sub(r"\s+", " ", " ".join(lines)).strip()
+        cleaned = re.sub(r"[*_`]+", "", cleaned)
+        if len(_tokenize(cleaned)) >= 8:
+            return cleaned[:700]
     return ""
 
 
@@ -262,22 +515,176 @@ def _extract_run_scenario_id(text: str, scenario_id: str) -> str:
 
 
 def _search_text_for_scenario(scenario_id: str, text: str) -> str:
+    profile = _scenario_profile_text(scenario_id, text)
+    section_summaries = []
+    for section_title, section_content in _markdown_sections(text)[:8]:
+        cleaned = _clean_markdown_text(re.sub(r"```.*?```", " ", section_content, flags=re.DOTALL))
+        if cleaned:
+            section_summaries.append(f"{section_title}: {cleaned[:500]}")
+    return "\n\n".join([profile] + section_summaries)
+
+
+def _extract_code_blocks(text: str) -> list[str]:
+    if not text:
+        return []
+    code_blocks = re.findall(r"```[^`]*?\n([^`]+?)```", text, re.DOTALL)
+    return [block.strip() for block in code_blocks if block.strip()]
+
+
+def _clean_markdown_text(text: str) -> str:
+    text = re.sub(r"<!--.*?-->", " ", text or "", flags=re.DOTALL)
+    text = re.sub(r"{{%.*?%}}", " ", text, flags=re.DOTALL)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[*_`]+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _extract_parameters(text: str) -> list[dict[str, str]]:
+    source = text or ""
+    parameters: dict[str, dict[str, str]] = {}
+
+    section_matches = list(
+        re.finditer(r"(?im)^###\s+--([a-z0-9][a-z0-9-]*)\s*$", source)
+    )
+    for index, match in enumerate(section_matches):
+        name = match.group(1).strip().lower()
+        end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(source)
+        block = source[match.end() : end]
+        row = parameters.setdefault(name, {"name": name})
+        for field, pattern in (
+            ("type", r"(?im)^Type:\s*(.+?)\s*$"),
+            ("required", r"(?im)^Required:\s*(.+?)\s*$"),
+            ("description", r"(?im)^Description:\s*(.+?)\s*$"),
+            ("short_description", r"(?im)^Short Description:\s*(.+?)\s*$"),
+            ("default", r"(?im)^Default:\s*(.+?)\s*$"),
+        ):
+            field_match = re.search(pattern, block)
+            if field_match:
+                row[field] = _clean_markdown_text(field_match.group(1))[:220]
+
+    table_pattern = re.compile(
+        r"(?m)`--([a-z0-9][a-z0-9-]*)`\s*\|\s*([^|\n]+)\|\s*([^|\n]*)\|\s*([^|\n]*)\|\s*([^|\n]*)"
+    )
+    for match in table_pattern.finditer(source):
+        name = match.group(1).strip().lower()
+        row = parameters.setdefault(name, {"name": name})
+        description = _clean_markdown_text(match.group(2))[:220]
+        if description and not row.get("description"):
+            row["description"] = description
+        if match.group(3).strip() and not row.get("type"):
+            row["type"] = _clean_markdown_text(match.group(3))[:80]
+        if match.group(4).strip() and not row.get("required"):
+            row["required"] = _clean_markdown_text(match.group(4))[:40]
+        if match.group(5).strip() and not row.get("default"):
+            row["default"] = _clean_markdown_text(match.group(5))[:100]
+
+    return sorted(
+        parameters.values(),
+        key=lambda row: (row["name"] in _GENERIC_PARAMETER_NAMES, row["name"]),
+    )
+
+
+def _parameter_profile(parameters: list[dict[str, str]], limit: int = 18) -> str:
+    if not parameters:
+        return ""
+    lines = ["Structured parameters:"]
+    for parameter in parameters[:limit]:
+        name = parameter.get("name", "")
+        description = (
+            parameter.get("description")
+            or parameter.get("short_description")
+            or parameter.get("type")
+            or ""
+        )[:140]
+        details = [f"--{name}"]
+        if description:
+            details.append(description)
+        if parameter.get("required", "").lower() in {"true", "yes", "required"}:
+            details.append("required")
+        if parameter.get("default"):
+            details.append(f"default {parameter['default']}")
+        lines.append(": ".join([details[0], "; ".join(details[1:])]) if len(details) > 1 else details[0])
+    return "\n".join(lines)
+
+
+def _scenario_profile_text(scenario_id: str, text: str) -> str:
     title = _extract_title(text, scenario_id)
     aliases = _scenario_aliases(scenario_id, title)
     summary = _summary_paragraph(text)
-    header_parts = [
+    parameters = _extract_parameters(text)
+    parameter_names = [
+        f"--{parameter['name']}"
+        for parameter in parameters
+        if parameter.get("name") and parameter["name"] not in _GENERIC_PARAMETER_NAMES
+    ]
+    parts = [
         f"Scenario ID: {scenario_id}",
         f"Scenario Name: {title}",
         f"Aliases: {', '.join(aliases)}",
-        f"Command: krknctl run {scenario_id}",
+        f"Runnable command: {_extract_run_command(text, scenario_id)}",
     ]
+    hint = _SCENARIO_PROFILE_HINTS.get(scenario_id)
+    if hint:
+        parts.append(f"Scenario retrieval profile: {hint}")
     if summary:
-        header_parts.append(f"Summary: {summary}")
+        parts.append(f"Documentation summary: {summary}")
+    if parameter_names:
+        parts.append(f"Distinct parameters: {', '.join(parameter_names[:18])}")
+    return "\n".join(parts)
+
+
+def _index_entry_text(profile: str, heading: str, passage: str) -> str:
+    compact_profile = profile[:1000]
+    compact_passage = (passage or "").strip()[:1400]
+    if not compact_passage:
+        return compact_profile
+    return f"{compact_profile}\n\n{heading}\n{compact_passage}"
+
+
+def _markdown_sections(text: str) -> list[tuple[str, str]]:
     body = _strip_frontmatter(text)
-    return "\n".join(header_parts) + "\n\n" + body
+    sections: list[tuple[str, list[str]]] = []
+    current_title = "Overview"
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_lines
+        content = "\n".join(current_lines).strip()
+        cleaned = _clean_markdown_text(re.sub(r"```.*?```", " ", content, flags=re.DOTALL))
+        if len(_tokenize(cleaned)) >= 8:
+            sections.append((current_title, current_lines))
+        current_lines = []
+
+    for line in body.splitlines():
+        heading_match = re.match(r"^(#{1,4})\s+(.+?)\s*$", line)
+        if heading_match:
+            flush()
+            current_title = _clean_markdown_text(heading_match.group(2))
+            continue
+        current_lines.append(line)
+    flush()
+
+    passages: list[tuple[str, str]] = []
+    skipped_titles = {
+        "parameters",
+        "usage example",
+        "table of contents",
+    }
+    for title, lines in sections:
+        normalized_title = title.strip().lower()
+        if normalized_title in skipped_titles or normalized_title.startswith("--"):
+            continue
+        content = "\n".join(lines).strip()
+        if not content:
+            continue
+        passages.append((title, content))
+    return passages
 
 
 def _chunk_paragraphs(text: str, chunk_size: int, overlap: int) -> list[str]:
+    if not text:
+        return []
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text or "") if part.strip()]
     if not paragraphs:
         return []
@@ -317,41 +724,83 @@ def _chunk_paragraphs(text: str, chunk_size: int, overlap: int) -> list[str]:
 def _build_index_entries(docs: list[tuple[str, str]]) -> list[IndexEntry]:
     entries: list[IndexEntry] = []
     for scenario_id, text in docs:
-        search_text = _search_text_for_scenario(scenario_id, text)
-        title = _extract_title(text, scenario_id)
-        aliases = _scenario_aliases(scenario_id, title)
-        synopsis = "\n".join(
-            [
-                f"Scenario ID: {scenario_id}",
-                f"Scenario Name: {title}",
-                f"Aliases: {', '.join(aliases)}",
-                f"Command: krknctl run {scenario_id}",
-            ]
-        )
+        profile = _scenario_profile_text(scenario_id, text)
         body = _strip_frontmatter(text)
-        passages = _chunk_paragraphs(body, INDEX_CHUNK_SIZE_CHARS, INDEX_CHUNK_OVERLAP_CHARS)
-        if not passages:
-            passages = [body or search_text]
-
-        overview = _summary_paragraph(text) or passages[0]
         entries.append(
             IndexEntry(
                 scenario_id=scenario_id,
-                chunk_id=f"{scenario_id}::overview",
-                passage=overview,
-                text=f"{synopsis}\n\nOverview:\n{overview}",
+                chunk_id=f"{scenario_id}::profile",
+                passage=profile,
+                text=profile,
             )
         )
-        if not INDEX_SCENARIO_CHUNKS:
-            continue
 
-        for idx, passage in enumerate(passages, start=1):
+        parameter_profile = _parameter_profile(_extract_parameters(text), limit=24)
+        if parameter_profile:
             entries.append(
                 IndexEntry(
                     scenario_id=scenario_id,
-                    chunk_id=f"{scenario_id}::chunk::{idx}",
-                    passage=passage,
-                    text=f"{synopsis}\n\nReference:\n{passage}",
+                    chunk_id=f"{scenario_id}::parameters",
+                    passage=parameter_profile,
+                    text=_index_entry_text(profile, "Structured parameters:", parameter_profile),
+                )
+            )
+
+        usage_blocks = [
+            block
+            for block in _extract_code_blocks(body)
+            if re.search(r"(?i)\bkrknctl\s+run\b", block)
+        ]
+        for usage_index, usage_block in enumerate(usage_blocks[:3], start=1):
+            entries.append(
+                IndexEntry(
+                    scenario_id=scenario_id,
+                    chunk_id=f"{scenario_id}::usage::{usage_index}",
+                    passage=usage_block,
+                    text=_index_entry_text(profile, "Usage example:", usage_block),
+                )
+            )
+
+        if not INDEX_SCENARIO_CHUNKS:
+            continue
+
+        section_count = 0
+        seen_passages: set[str] = set()
+        for section_title, section_content in _markdown_sections(body):
+            for passage in _chunk_paragraphs(
+                section_content,
+                INDEX_CHUNK_SIZE_CHARS,
+                INDEX_CHUNK_OVERLAP_CHARS,
+            ):
+                if section_count >= _MAX_SECTION_ENTRIES_PER_SCENARIO:
+                    break
+                cleaned = _clean_markdown_text(passage)
+                if not cleaned or cleaned in seen_passages:
+                    continue
+                seen_passages.add(cleaned)
+                section_count += 1
+                entries.append(
+                    IndexEntry(
+                        scenario_id=scenario_id,
+                        chunk_id=f"{scenario_id}::section::{section_count}",
+                        passage=f"{section_title}\n\n{passage}",
+                        text=_index_entry_text(
+                            profile,
+                            f"Documentation section: {section_title}",
+                            passage,
+                        ),
+                    )
+                )
+            if section_count >= _MAX_SECTION_ENTRIES_PER_SCENARIO:
+                break
+
+        if section_count == 0 and body.strip():
+            entries.append(
+                IndexEntry(
+                    scenario_id=scenario_id,
+                    chunk_id=f"{scenario_id}::body",
+                    passage=body[:INDEX_CHUNK_SIZE_CHARS],
+                    text=_index_entry_text(profile, "Reference:", body),
                 )
             )
     return entries
@@ -363,23 +812,17 @@ def _scenario_support_text(
     scenario_text: str,
     support_passages: list[str],
 ) -> str:
-    title = _extract_title(scenario_text, scenario_id)
-    aliases = _scenario_aliases(scenario_id, title)
-    parts = [
-        f"Scenario ID: {scenario_id}",
-        f"Scenario Name: {title}",
-        f"Aliases: {', '.join(aliases)}",
-        f"Command: krknctl run {scenario_id}",
-    ]
-    summary = _summary_paragraph(scenario_text)
-    if summary:
-        parts.append(f"Summary: {summary}")
+    parts = [_scenario_profile_text(scenario_id, scenario_text)]
 
     if support_passages:
-        parts.append("Top matching passages:")
+        parts.append("Top matching documentation passages:")
         parts.extend(support_passages[: max(1, RERANK_SUPPORT_PASSAGES)])
     else:
-        parts.append(compact_for_reranking(_strip_frontmatter(scenario_text)))
+        parameter_profile = _parameter_profile(_extract_parameters(scenario_text), limit=12)
+        if parameter_profile:
+            parts.append(parameter_profile)
+        else:
+            parts.append(compact_for_reranking(_strip_frontmatter(scenario_text)))
 
     return compact_for_reranking("\n\n".join(parts))
 
@@ -913,6 +1356,8 @@ def run_retrieval(
         faiss_scores[scenario_id] = (0.8 * best) + (0.2 * mean_top)
 
     scenario_ids = sorted(set(doc_ids) | set(doc_texts.keys()))
+    schema_scores = _schema_scores(query, scenario_ids)
+    has_schema_signal = any(score > 0.0 for score in schema_scores.values())
     bm25_scores = _bm25_scores(query, scenario_ids, search_texts)
     candidate_k = min(
         len(scenario_ids),
@@ -981,11 +1426,16 @@ def run_retrieval(
                 "retrieval_score": retrieval_score,
                 "faiss_score": faiss_norm,
                 "bm25_score": bm25_norm,
+                "schema_score": schema_scores.get(doc_id, 0.0),
                 "support_passages": unique_support,
             }
         )
 
-    candidates.sort(key=lambda row: row["retrieval_score"], reverse=True)
+    candidates.sort(
+        key=lambda row: row["retrieval_score"]
+        + (_SCHEMA_CANDIDATE_WEIGHT * row.get("schema_score", 0.0)),
+        reverse=True,
+    )
     if not candidates:
         return []
 
@@ -1023,16 +1473,24 @@ def run_retrieval(
             "retrieval_score": candidate["retrieval_score"],
             "faiss_score": candidate["faiss_score"],
             "bm25_score": candidate["bm25_score"],
+            "schema_score": candidate.get("schema_score", 0.0),
             "support_passages": candidate.get("support_passages", []),
         }
         for candidate, score in zip(candidates, rerank_scores)
     ]
     for row in results:
-        row["final_score"] = score_to_match(
+        base_score = score_to_match(
             row["score"],
             row.get("faiss_score", 0.0),
             row.get("bm25_score", 0.0),
         )
+        if has_schema_signal:
+            row["final_score"] = (
+                ((1.0 - _SCHEMA_FINAL_WEIGHT) * base_score)
+                + (_SCHEMA_FINAL_WEIGHT * float(row.get("schema_score", 0.0)))
+            )
+        else:
+            row["final_score"] = base_score
     results.sort(key=lambda row: row["final_score"], reverse=True)
 
     total_ms = (time.perf_counter() - started) * 1000

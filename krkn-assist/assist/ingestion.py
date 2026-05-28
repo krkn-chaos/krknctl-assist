@@ -30,6 +30,16 @@ _NOT_SUPPORTED_PATTERN = re.compile(
     r"not yet supported|not currently available via krknctl",
     re.IGNORECASE,
 )
+_SCENARIO_ID_ALIASES = {
+    "power-outage-scenarios": "power-outages",
+    "pvc-scenario": "pvc-scenarios",
+    "storage-throttle-scenario": "storage-throttle",
+}
+
+
+def _canonical_scenario_id(scenario_id: str) -> str:
+    scenario_id = (scenario_id or "").strip()
+    return _SCENARIO_ID_ALIASES.get(scenario_id, scenario_id)
 
 
 def load_local_scenario_docs(docs_dir: str) -> list[tuple[str, str]]:
@@ -108,6 +118,7 @@ def _clone_repository(repo_url: str, dest: str, branch: str | None = None) -> No
 
 
 def _append_doc(doc_map: Dict[str, List[str]], scenario_id: str, content: str) -> None:
+    scenario_id = _canonical_scenario_id(scenario_id)
     if not scenario_id or not content:
         return
     if scenario_id in EXCLUDED_SCENARIO_IDS:
