@@ -115,7 +115,13 @@ async def retrieve(request: RetrieveRequest):
         query=query,
         results=payload,
         top_match=payload[0]["id"] if payload else None,
-        policy={"accepted": decision.accepted, "reason": decision.reason},
+        policy={
+            "accepted": decision.accepted,
+            "reason": decision.reason,
+            "scenarios": decision.scenarios,
+            "timing_ms": decision.timing_ms,
+            "threshold": service.RELEVANCE_THRESHOLD,
+        },
         message=f"Found {len(payload)} relevant scenarios" if payload else "No matching chaos scenarios found",
     )
 

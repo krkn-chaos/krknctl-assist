@@ -21,17 +21,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="krkn retriever maintenance CLI")
     parser.add_argument(
         "--device",
-        choices=["auto", "cuda", "mps", "cpu"],
+        choices=["auto"],
         default=DEFAULT_DEVICE,
     )
     parser.add_argument(
         "--cpu-only",
         action="store_true",
         default=DEFAULT_CPU_ONLY,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--backend",
-        choices=["auto", "torch", "vulkan"],
+        choices=["auto", "vulkan"],
         default=DEFAULT_BACKEND,
     )
     parser.add_argument("--llama-model", default=DEFAULT_LLAMA_MODEL)
@@ -42,6 +43,9 @@ def main() -> None:
     index_cmd.add_argument("--docs", default=DOCS_DIR)
 
     args = parser.parse_args()
+    if args.cpu_only:
+        parser.error("--cpu-only is disabled; the retriever always uses Vulkan")
+
     ranker = create_ranker(
         device_preference=args.device,
         cpu_only=args.cpu_only,

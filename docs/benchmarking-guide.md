@@ -38,3 +38,21 @@ Small changes are normal, especially when the model backend or CPU features diff
 * A rise in `latency_ms.p95` usually means a subset of queries is getting much slower, often because reranking or model loading changed, or user-input drift.
 * A rise in `stage_timing_ms.rerank.avg` usually points to cross-encoder backend, quantization, CPU capability changes, ONNX Runtime unavailability
 * A rise in `stage_timing_ms.retrieval.avg` usually measures steady-state retrieval latency after indexes are already built and loaded. Index build time should be tracked separately, if needed, as an offline pipeline metric.
+
+
+
+## Running Benchmarks
+
+The benchmark uses the debug API, not the OpenAI-compatible API. Keep
+`./scripts/pipeline.sh --verbose` running in one terminal so the debug endpoint stays available on `http://127.0.0.1:18080/retrieve`, then run the benchmark in a second terminal.
+
+```bash
+# Terminal 1: start the debug API and leave it open
+./scripts/pipeline.sh --verbose
+
+# Terminal 2: run a 100-query benchmark
+mkdir -p bench-res
+RUN_DIR="bench-res/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$RUN_DIR"
+python3 scripts/benchmark.py --n 100 --fr 10 --out "$RUN_DIR/benchmark.json"
+```

@@ -6,7 +6,6 @@ from .settings import (
     CE_TOP2_GAP_THRESHOLD,
     FAISS_TOP2_GAP_THRESHOLD,
     MAX_MULTI_SCENARIOS,
-    MIN_CE_SCORE,
     MIN_FAISS_SCORE,
     MIN_MATCH_SCORE,
     MIN_MULTI_SCORE,
@@ -134,7 +133,8 @@ def decide_scenarios(
     timing_ms = int(top_timing.get("total")) if "total" in top_timing else None
 
     top_faiss = float(top.get("retrieval_score", 0.0))
-    if top_faiss < MIN_FAISS_SCORE:
+    top_final = float(top.get("final_score", 0.0))
+    if top_faiss < MIN_FAISS_SCORE and top_final < max(threshold, MIN_MULTI_SCORE):
         return PolicyDecision(
             accepted=False,
             reason="min_faiss_score",
@@ -142,16 +142,6 @@ def decide_scenarios(
             timing_ms=timing_ms,
         )
 
-    max_ce = max((float(row.get("score", float("-inf"))) for row in evidence), default=float("-inf"))
-    if max_ce < MIN_CE_SCORE:
-        return PolicyDecision(
-            accepted=False,
-            reason="min_ce_score",
-            scenarios=[],
-            timing_ms=timing_ms,
-        )
-
-    top_final = float(top.get("final_score", 0.0))
     if top_final < threshold:
         return PolicyDecision(
             accepted=False,

@@ -26,8 +26,6 @@ WORKDIR /app
 
 ARG GGML_BACKEND=vulkan
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
-ARG TORCH_BUILD=cpu
-ARG TORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu126
 
 # ── [2/4] Python + build tools ───────────────────────────────────────────────
 RUN dnf -y install --setopt=install_weak_deps=False \
@@ -51,9 +49,8 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 # ── [4/4] Python runtime dependencies ────────────────────────────────────────
 #
-# torch: CPU-only wheel by default (Vulkan acceleration goes through llama.cpp
-#        for embedding; torch is only needed as transformers backend for the
-#        reranker ONNX export step and as an inference fallback).
+# torch: PyTorch CPU wheel used only for ONNX export when a cached reranker is not
+#        available. Embeddings stay on llama.cpp/Vulkan.
 #
 # onnxruntime: used by OnnxCrossEncoder for cross-encoder reranking.
 #              No GPU dependency required for 20-document workloads.
@@ -61,22 +58,25 @@ RUN pip install --upgrade pip setuptools wheel && \
 # optimum[onnxruntime]: preferred ONNX export path from HuggingFace models.
 #
 # FlagEmbedding intentionally removed: FlagReranker replaced by OnnxCrossEncoder.
-RUN if [ "$TORCH_BUILD" = "cuda" ]; then \
-      pip install --index-url "$TORCH_CUDA_INDEX_URL" torch; \
-    else \
-      pip install --index-url https://download.pytorch.org/whl/cpu torch; \
-    fi && \
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install \
       fastapi \
       uvicorn \
-      "transformers>=4.52.4" \
-      "huggingface_hub[cli]" \
-      sentence-transformers \
+      "transformers>=4.52.4,<5" \
+      "huggingface_hub[cli]>=0.30,<1" \
       faiss-cpu \
+      onnx \
+      onnxscript \
       onnxruntime \
-      "optimum[onnxruntime]" \
+      "optimum[onnxruntime]>=1.27,<2" \
       requests
 
+ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+ENV RETRIEVER_BACKEND=vulkan \
+    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
+    LLAMA_GPU_LAYERS=-1
+
+COPY models/ /models/
 COPY krkn-assist/ /app/
 
 EXPOSE 8080 18080

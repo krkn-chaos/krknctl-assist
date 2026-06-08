@@ -24,8 +24,6 @@ from .settings import (
     FINAL_BM25_WEIGHT,
     FINAL_CE_WEIGHT,
     FINAL_FAISS_WEIGHT,
-    FINAL_INTENT_WEIGHT,
-    FINAL_LEXICAL_WEIGHT,
     GITHUB_BRANCH,
     GITHUB_REPO,
     INDEX_CHUNK_OVERLAP_CHARS,
@@ -40,8 +38,6 @@ from .settings import (
     RERANK_SCORE_CEILING,
     RERANK_SCORE_FLOOR,
     REPO_PATH,
-    INTENT_MATCH_BOOST,
-    INTENT_MISMATCH_PENALTY,
     RERANK_BATCH_SIZE,
     RERANK_CANDIDATE_K,
     RERANK_DOC_CHARS,
@@ -51,7 +47,6 @@ from .settings import (
     RERANK_THREADS,
     RERANK_TOP_FRACTION,
     RETRIEVAL_CANDIDATE_K,
-    RETRIEVER_BATCH_SIZE,
     RETRIEVER_MODEL,
     VECTOR_SEARCH_MULTIPLIER,
 )
@@ -68,46 +63,26 @@ class IndexEntry:
     passage: str
 
 
-_LEXICAL_STOPWORDS = {
-    "about",
-    "and",
-    "are",
-    "can",
-    "create",
-    "from",
-    "how",
-    "into",
-    "label",
-    "labeled",
-    "labels",
-    "the",
-    "this",
-    "through",
-    "while",
-    "with",
+_GENERIC_PARAMETER_NAMES = {
+    "aws-access-key-id",
+    "aws-default-region",
+    "aws-secret-access-key",
+    "azure-client-id",
+    "azure-client-secret",
+    "azure-subscription-id",
+    "azure-tenant",
+    "chaos-duration",
+    "duration",
+    "gcp-application-credentials",
+    "image",
+    "namespace",
+    "service-account",
+    "taints",
+    "timeout",
+    "wait-duration",
 }
 
-_INTENT_FAMILY_KEYWORDS = {
-    "pod": {"pod", "pods"},
-    "container": {"container", "containers"},
-    "node": {"node", "nodes", "worker", "workers"},
-    "service": {"service", "services"},
-    "network": {"network", "latency", "packet", "packets", "bandwidth", "ingress", "egress"},
-    "dns": {"dns"},
-    "pvc": {"pvc", "persistentvolumeclaim", "persistent-volume-claim"},
-    "time": {"time", "clock"},
-    "zone": {"zone", "zones", "zonal"},
-    "power": {"power", "outage", "outages"},
-    "memory": {"memory", "ram"},
-    "cpu": {"cpu"},
-    "io": {"io", "disk", "storage"},
-    "http": {"http"},
-    "vmi": {"vmi", "vm", "vms", "virtualmachine", "virtualmachines", "kubevirt"},
-    "application": {"application", "applications", "app", "apps"},
-    "aurora": {"aurora"},
-    "efs": {"efs"},
-    "etcd": {"etcd"},
-}
+_MAX_SECTION_ENTRIES_PER_SCENARIO = 4
 
 
 def probe_vulkan_devices() -> list[dict]:
@@ -163,7 +138,7 @@ def log_vulkan_device_status(devices: list[dict]) -> None:
 
     renderer_names = ", ".join(str(device.get("name")) for device in devices)
     logger.warning(
-        "Vulkan is using a software renderer (%s); falling back to CPU-only llama.cpp",
+        "Vulkan software renderer active: %s",
         renderer_names,
     )
 
@@ -172,29 +147,17 @@ def score_to_match(
     ce_score: float,
     faiss_score: float,
     bm25_score: float,
-    lexical_score: float = 0.0,
-    intent_score: float = 0.0,
 ) -> float:
     ce_calibrated = calibrate_rerank_score(ce_score)
     faiss_score = max(0.0, min(1.0, float(faiss_score)))
     bm25_score = max(0.0, min(1.0, float(bm25_score)))
-    lexical_score = max(0.0, min(1.0, float(lexical_score)))
-    intent_score = max(0.0, min(1.0, float(intent_score)))
-    weight_total = (
-        FINAL_CE_WEIGHT
-        + FINAL_FAISS_WEIGHT
-        + FINAL_BM25_WEIGHT
-        + FINAL_LEXICAL_WEIGHT
-        + FINAL_INTENT_WEIGHT
-    )
+    weight_total = FINAL_CE_WEIGHT + FINAL_FAISS_WEIGHT + FINAL_BM25_WEIGHT
     if weight_total <= 0:
         return 0.0
     return (
         (FINAL_CE_WEIGHT * ce_calibrated)
         + (FINAL_FAISS_WEIGHT * faiss_score)
         + (FINAL_BM25_WEIGHT * bm25_score)
-        + (FINAL_LEXICAL_WEIGHT * lexical_score)
-        + (FINAL_INTENT_WEIGHT * intent_score)
     ) / weight_total
 
 
@@ -202,93 +165,7 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
-def _lexical_terms(text: str) -> set[str]:
-    return {
-        token
-        for token in _tokenize(text)
-        if len(token) >= 3 and token not in _LEXICAL_STOPWORDS
-    }
 
-
-def _lexical_overlap_score(query: str, text: str) -> float:
-    query_terms = _lexical_terms(query)
-    if not query_terms:
-        return 0.0
-    text_terms = set(_tokenize(text))
-    return len(query_terms & text_terms) / len(query_terms)
-
-
-def _detect_query_intent_families(query: str) -> set[str]:
-    query_terms = set(_tokenize(query))
-    families = {
-        family
-        for family, keywords in _INTENT_FAMILY_KEYWORDS.items()
-        if query_terms & keywords
-    }
-    if "container" in families:
-        families.discard("pod")
-    return families
-
-
-def _scenario_intent_families(scenario_id: str, text: str) -> set[str]:
-    family_terms = set(_tokenize(f"{scenario_id} {_extract_title(text, scenario_id)}"))
-    families = {
-        family
-        for family, keywords in _INTENT_FAMILY_KEYWORDS.items()
-        if family_terms & keywords
-    }
-
-    if scenario_id.startswith("node-memory"):
-        families.add("memory")
-    if scenario_id.startswith("node-cpu"):
-        families.add("cpu")
-    if scenario_id.startswith("node-io"):
-        families.add("io")
-    if scenario_id.startswith("pod-"):
-        families.add("pod")
-    if scenario_id.startswith("container-"):
-        families.add("container")
-    if scenario_id.startswith("node-"):
-        families.add("node")
-    if "network" in scenario_id:
-        families.add("network")
-    return families
-
-
-def _intent_alignment_score(query: str, scenario_id: str, text: str) -> float:
-    query_families = _detect_query_intent_families(query)
-    if not query_families:
-        return 0.0
-    scenario_families = _scenario_intent_families(scenario_id, text)
-    if not scenario_families:
-        return 0.0
-    return 1.0 if query_families & scenario_families else 0.0
-
-
-def _filter_conflicting_intent_results(
-    query: str,
-    results: list[dict],
-    doc_texts: dict[str, str],
-) -> list[dict]:
-    query_families = _detect_query_intent_families(query)
-    if not query_families:
-        return results
-
-    has_positive_intent_match = any(float(row.get("intent_score", 0.0)) > 0.0 for row in results)
-    if not has_positive_intent_match:
-        return results
-
-    filtered: list[dict] = []
-    for row in results:
-        scenario_id = str(row.get("id") or "")
-        scenario_families = _scenario_intent_families(scenario_id, doc_texts.get(scenario_id, ""))
-        if (
-            float(row.get("intent_score", 0.0)) > 0.0
-            or not scenario_families
-            or (query_families & scenario_families)
-        ):
-            filtered.append(row)
-    return filtered or results
 
 
 def _bm25_scores(query: str, doc_ids: list[str], doc_texts: dict[str, str]) -> dict[str, float]:
@@ -382,12 +259,26 @@ def _scenario_aliases(scenario_id: str, title: str) -> list[str]:
 
 def _summary_paragraph(text: str) -> str:
     body = _strip_frontmatter(text)
+    body = re.sub(r"<!--.*?-->", " ", body, flags=re.DOTALL)
     body = re.sub(r"```.*?```", " ", body, flags=re.DOTALL)
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
     for paragraph in paragraphs:
-        cleaned = re.sub(r"\s+", " ", paragraph).strip()
-        if cleaned:
-            return cleaned[:600]
+        lines = []
+        for line in paragraph.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("|") or re.match(r"^[-:| ]+$", stripped):
+                continue
+            if re.match(r"^#{1,6}\s+", stripped):
+                continue
+            if stripped.lower().startswith(("can also set any global variable", "to see all available")):
+                continue
+            lines.append(stripped)
+        cleaned = re.sub(r"\s+", " ", " ".join(lines)).strip()
+        cleaned = re.sub(r"[*_`]+", "", cleaned)
+        if len(_tokenize(cleaned)) >= 8:
+            return cleaned[:700]
     return ""
 
 
@@ -407,22 +298,173 @@ def _extract_run_scenario_id(text: str, scenario_id: str) -> str:
 
 
 def _search_text_for_scenario(scenario_id: str, text: str) -> str:
+    profile = _scenario_profile_text(scenario_id, text)
+    section_summaries = []
+    for section_title, section_content in _markdown_sections(text)[:8]:
+        cleaned = _clean_markdown_text(re.sub(r"```.*?```", " ", section_content, flags=re.DOTALL))
+        if cleaned:
+            section_summaries.append(f"{section_title}: {cleaned[:500]}")
+    return "\n\n".join([profile] + section_summaries)
+
+
+def _extract_code_blocks(text: str) -> list[str]:
+    if not text:
+        return []
+    code_blocks = re.findall(r"```[^`]*?\n([^`]+?)```", text, re.DOTALL)
+    return [block.strip() for block in code_blocks if block.strip()]
+
+
+def _clean_markdown_text(text: str) -> str:
+    text = re.sub(r"<!--.*?-->", " ", text or "", flags=re.DOTALL)
+    text = re.sub(r"{{%.*?%}}", " ", text, flags=re.DOTALL)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"[*_`]+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _extract_parameters(text: str) -> list[dict[str, str]]:
+    source = text or ""
+    parameters: dict[str, dict[str, str]] = {}
+
+    section_matches = list(
+        re.finditer(r"(?im)^###\s+--([a-z0-9][a-z0-9-]*)\s*$", source)
+    )
+    for index, match in enumerate(section_matches):
+        name = match.group(1).strip().lower()
+        end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(source)
+        block = source[match.end() : end]
+        row = parameters.setdefault(name, {"name": name})
+        for field, pattern in (
+            ("type", r"(?im)^Type:\s*(.+?)\s*$"),
+            ("required", r"(?im)^Required:\s*(.+?)\s*$"),
+            ("description", r"(?im)^Description:\s*(.+?)\s*$"),
+            ("short_description", r"(?im)^Short Description:\s*(.+?)\s*$"),
+            ("default", r"(?im)^Default:\s*(.+?)\s*$"),
+        ):
+            field_match = re.search(pattern, block)
+            if field_match:
+                row[field] = _clean_markdown_text(field_match.group(1))[:220]
+
+    table_pattern = re.compile(
+        r"(?m)`--([a-z0-9][a-z0-9-]*)`\s*\|\s*([^|\n]+)\|\s*([^|\n]*)\|\s*([^|\n]*)\|\s*([^|\n]*)"
+    )
+    for match in table_pattern.finditer(source):
+        name = match.group(1).strip().lower()
+        row = parameters.setdefault(name, {"name": name})
+        description = _clean_markdown_text(match.group(2))[:220]
+        if description and not row.get("description"):
+            row["description"] = description
+        if match.group(3).strip() and not row.get("type"):
+            row["type"] = _clean_markdown_text(match.group(3))[:80]
+        if match.group(4).strip() and not row.get("required"):
+            row["required"] = _clean_markdown_text(match.group(4))[:40]
+        if match.group(5).strip() and not row.get("default"):
+            row["default"] = _clean_markdown_text(match.group(5))[:100]
+
+    return sorted(
+        parameters.values(),
+        key=lambda row: (row["name"] in _GENERIC_PARAMETER_NAMES, row["name"]),
+    )
+
+
+def _parameter_profile(parameters: list[dict[str, str]], limit: int = 18) -> str:
+    if not parameters:
+        return ""
+    lines = ["Structured parameters:"]
+    for parameter in parameters[:limit]:
+        name = parameter.get("name", "")
+        description = (
+            parameter.get("description")
+            or parameter.get("short_description")
+            or parameter.get("type")
+            or ""
+        )[:140]
+        details = [f"--{name}"]
+        if description:
+            details.append(description)
+        if parameter.get("required", "").lower() in {"true", "yes", "required"}:
+            details.append("required")
+        if parameter.get("default"):
+            details.append(f"default {parameter['default']}")
+        lines.append(": ".join([details[0], "; ".join(details[1:])]) if len(details) > 1 else details[0])
+    return "\n".join(lines)
+
+
+def _scenario_profile_text(scenario_id: str, text: str) -> str:
     title = _extract_title(text, scenario_id)
     aliases = _scenario_aliases(scenario_id, title)
     summary = _summary_paragraph(text)
-    header_parts = [
+    parameters = _extract_parameters(text)
+    parameter_names = [
+        f"--{parameter['name']}"
+        for parameter in parameters
+        if parameter.get("name") and parameter["name"] not in _GENERIC_PARAMETER_NAMES
+    ]
+    parts = [
         f"Scenario ID: {scenario_id}",
         f"Scenario Name: {title}",
         f"Aliases: {', '.join(aliases)}",
-        f"Command: krknctl run {scenario_id}",
+        f"Runnable command: {_extract_run_command(text, scenario_id)}",
     ]
     if summary:
-        header_parts.append(f"Summary: {summary}")
+        parts.append(f"Documentation summary: {summary}")
+    if parameter_names:
+        parts.append(f"Distinct parameters: {', '.join(parameter_names[:18])}")
+    return "\n".join(parts)
+
+
+def _index_entry_text(profile: str, heading: str, passage: str) -> str:
+    compact_profile = profile[:1000]
+    compact_passage = (passage or "").strip()[:1400]
+    if not compact_passage:
+        return compact_profile
+    return f"{compact_profile}\n\n{heading}\n{compact_passage}"
+
+
+def _markdown_sections(text: str) -> list[tuple[str, str]]:
     body = _strip_frontmatter(text)
-    return "\n".join(header_parts) + "\n\n" + body
+    sections: list[tuple[str, list[str]]] = []
+    current_title = "Overview"
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_lines
+        content = "\n".join(current_lines).strip()
+        cleaned = _clean_markdown_text(re.sub(r"```.*?```", " ", content, flags=re.DOTALL))
+        if len(_tokenize(cleaned)) >= 8:
+            sections.append((current_title, current_lines))
+        current_lines = []
+
+    for line in body.splitlines():
+        heading_match = re.match(r"^(#{1,4})\s+(.+?)\s*$", line)
+        if heading_match:
+            flush()
+            current_title = _clean_markdown_text(heading_match.group(2))
+            continue
+        current_lines.append(line)
+    flush()
+
+    passages: list[tuple[str, str]] = []
+    skipped_titles = {
+        "parameters",
+        "usage example",
+        "table of contents",
+    }
+    for title, lines in sections:
+        normalized_title = title.strip().lower()
+        if normalized_title in skipped_titles or normalized_title.startswith("--"):
+            continue
+        content = "\n".join(lines).strip()
+        if not content:
+            continue
+        passages.append((title, content))
+    return passages
 
 
 def _chunk_paragraphs(text: str, chunk_size: int, overlap: int) -> list[str]:
+    if not text:
+        return []
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text or "") if part.strip()]
     if not paragraphs:
         return []
@@ -462,41 +504,83 @@ def _chunk_paragraphs(text: str, chunk_size: int, overlap: int) -> list[str]:
 def _build_index_entries(docs: list[tuple[str, str]]) -> list[IndexEntry]:
     entries: list[IndexEntry] = []
     for scenario_id, text in docs:
-        search_text = _search_text_for_scenario(scenario_id, text)
-        title = _extract_title(text, scenario_id)
-        aliases = _scenario_aliases(scenario_id, title)
-        synopsis = "\n".join(
-            [
-                f"Scenario ID: {scenario_id}",
-                f"Scenario Name: {title}",
-                f"Aliases: {', '.join(aliases)}",
-                f"Command: krknctl run {scenario_id}",
-            ]
-        )
+        profile = _scenario_profile_text(scenario_id, text)
         body = _strip_frontmatter(text)
-        passages = _chunk_paragraphs(body, INDEX_CHUNK_SIZE_CHARS, INDEX_CHUNK_OVERLAP_CHARS)
-        if not passages:
-            passages = [body or search_text]
-
-        overview = _summary_paragraph(text) or passages[0]
         entries.append(
             IndexEntry(
                 scenario_id=scenario_id,
-                chunk_id=f"{scenario_id}::overview",
-                passage=overview,
-                text=search_text,
+                chunk_id=f"{scenario_id}::profile",
+                passage=profile,
+                text=profile,
             )
         )
-        if not INDEX_SCENARIO_CHUNKS:
-            continue
 
-        for idx, passage in enumerate(passages, start=1):
+        parameter_profile = _parameter_profile(_extract_parameters(text), limit=24)
+        if parameter_profile:
             entries.append(
                 IndexEntry(
                     scenario_id=scenario_id,
-                    chunk_id=f"{scenario_id}::chunk::{idx}",
-                    passage=passage,
-                    text=f"{synopsis}\n\nReference:\n{passage}",
+                    chunk_id=f"{scenario_id}::parameters",
+                    passage=parameter_profile,
+                    text=_index_entry_text(profile, "Structured parameters:", parameter_profile),
+                )
+            )
+
+        usage_blocks = [
+            block
+            for block in _extract_code_blocks(body)
+            if re.search(r"(?i)\bkrknctl\s+run\b", block)
+        ]
+        for usage_index, usage_block in enumerate(usage_blocks[:3], start=1):
+            entries.append(
+                IndexEntry(
+                    scenario_id=scenario_id,
+                    chunk_id=f"{scenario_id}::usage::{usage_index}",
+                    passage=usage_block,
+                    text=_index_entry_text(profile, "Usage example:", usage_block),
+                )
+            )
+
+        if not INDEX_SCENARIO_CHUNKS:
+            continue
+
+        section_count = 0
+        seen_passages: set[str] = set()
+        for section_title, section_content in _markdown_sections(body):
+            for passage in _chunk_paragraphs(
+                section_content,
+                INDEX_CHUNK_SIZE_CHARS,
+                INDEX_CHUNK_OVERLAP_CHARS,
+            ):
+                if section_count >= _MAX_SECTION_ENTRIES_PER_SCENARIO:
+                    break
+                cleaned = _clean_markdown_text(passage)
+                if not cleaned or cleaned in seen_passages:
+                    continue
+                seen_passages.add(cleaned)
+                section_count += 1
+                entries.append(
+                    IndexEntry(
+                        scenario_id=scenario_id,
+                        chunk_id=f"{scenario_id}::section::{section_count}",
+                        passage=f"{section_title}\n\n{passage}",
+                        text=_index_entry_text(
+                            profile,
+                            f"Documentation section: {section_title}",
+                            passage,
+                        ),
+                    )
+                )
+            if section_count >= _MAX_SECTION_ENTRIES_PER_SCENARIO:
+                break
+
+        if section_count == 0 and body.strip():
+            entries.append(
+                IndexEntry(
+                    scenario_id=scenario_id,
+                    chunk_id=f"{scenario_id}::body",
+                    passage=body[:INDEX_CHUNK_SIZE_CHARS],
+                    text=_index_entry_text(profile, "Reference:", body),
                 )
             )
     return entries
@@ -508,23 +592,17 @@ def _scenario_support_text(
     scenario_text: str,
     support_passages: list[str],
 ) -> str:
-    title = _extract_title(scenario_text, scenario_id)
-    aliases = _scenario_aliases(scenario_id, title)
-    parts = [
-        f"Scenario ID: {scenario_id}",
-        f"Scenario Name: {title}",
-        f"Aliases: {', '.join(aliases)}",
-        f"Command: krknctl run {scenario_id}",
-    ]
-    summary = _summary_paragraph(scenario_text)
-    if summary:
-        parts.append(f"Summary: {summary}")
+    parts = [_scenario_profile_text(scenario_id, scenario_text)]
+    parameter_profile = _parameter_profile(_extract_parameters(scenario_text), limit=12)
+    if parameter_profile:
+        parts.append(parameter_profile)
 
     if support_passages:
-        parts.append("Top matching passages:")
+        parts.append("Top matching documentation passages:")
         parts.extend(support_passages[: max(1, RERANK_SUPPORT_PASSAGES)])
     else:
-        parts.append(compact_for_reranking(_strip_frontmatter(scenario_text)))
+        if not parameter_profile:
+            parts.append(compact_for_reranking(_strip_frontmatter(scenario_text)))
 
     return compact_for_reranking("\n\n".join(parts))
 
@@ -532,12 +610,7 @@ def _scenario_support_text(
 def cuda_runtime_works() -> bool:
     try:
         import torch
-
-        if not torch.cuda.is_available():
-            return False
-        probe = torch.tensor([1.0], device="cuda")
-        _ = (probe + 1).cpu().item()
-        return True
+        return torch.cuda.is_available()
     except Exception:
         return False
 
@@ -545,13 +618,7 @@ def cuda_runtime_works() -> bool:
 def mps_runtime_works() -> bool:
     try:
         import torch
-
-        mps_backend = getattr(torch.backends, "mps", None)
-        if not (mps_backend and mps_backend.is_available()):
-            return False
-        probe = torch.tensor([1.0], device="mps")
-        _ = (probe + 1).cpu().item()
-        return True
+        return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     except Exception:
         return False
 
@@ -575,7 +642,7 @@ def resolve_device(device_preference: str = "auto", cpu_only: bool = False) -> s
 def resolve_backend(backend: str, llama_model_path: str) -> str:
     if backend in {"torch", "vulkan"}:
         return backend
-    return "vulkan" if llama_model_path else "torch"
+    return "vulkan"
 
 
 def compact_for_reranking(text: str) -> str:
@@ -609,6 +676,7 @@ class OnnxCrossEncoder:
         from transformers import AutoTokenizer
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        errors: list[str] = []
 
         try:
             import onnxruntime as ort
@@ -638,12 +706,17 @@ class OnnxCrossEncoder:
                 self._input_names = {item.name for item in self._session.get_inputs()}
                 self._backend = "onnx"
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(str(exc))
 
-        self._load_transformers_fallback()
+        detail = "; ".join(errors) if errors else "unknown error"
+        raise RuntimeError(
+            "ONNX reranker initialization failed and transformers inference fallback is disabled: "
+            f"{detail}"
+        )
 
     def _export_to_onnx(self, out_dir: Path) -> None:
+        errors: list[str] = []
         try:
             from optimum.onnxruntime import ORTModelForSequenceClassification
 
@@ -653,8 +726,8 @@ class OnnxCrossEncoder:
             )
             model.save_pretrained(str(out_dir))
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            errors.append(f"optimum export failed: {exc}")
 
         try:
             import torch
@@ -689,8 +762,11 @@ class OnnxCrossEncoder:
                 dynamic_axes=dynamic_axes,
                 opset_version=14,
             )
-        except Exception:
             return
+        except Exception as exc:
+            errors.append(f"torch onnx export failed: {exc}")
+
+        raise RuntimeError("; ".join(errors))
 
     @staticmethod
     def _quantize_onnx(src: Path, dst: Path) -> Path:
@@ -704,20 +780,11 @@ class OnnxCrossEncoder:
         except Exception:
             return src
 
-    def _load_transformers_fallback(self) -> None:
-        from transformers import AutoModelForSequenceClassification
-
-        device = resolve_device()
-        self._hf_model = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name
-        ).to(device).eval()
-        self._backend = "transformers"
-
     def compute_score(self, pairs: list[list[str]], batch_size: int | None = None) -> list[float]:
         batch_size = batch_size or RERANK_BATCH_SIZE
         if self._backend == "onnx":
             return self._score_onnx(pairs, batch_size)
-        return self._score_transformers(pairs, batch_size)
+        raise RuntimeError("ONNX reranker is not initialized")
 
     def _score_onnx(self, pairs: list[list[str]], batch_size: int) -> list[float]:
         scores: list[float] = []
@@ -744,32 +811,6 @@ class OnnxCrossEncoder:
             )
             scores.extend(batch_scores)
         return scores
-
-    def _score_transformers(self, pairs: list[list[str]], batch_size: int) -> list[float]:
-        import torch
-
-        device = next(self._hf_model.parameters()).device
-        scores: list[float] = []
-        with torch.no_grad():
-            for start in range(0, len(pairs), batch_size):
-                batch = pairs[start : start + batch_size]
-                encoded = self._tokenizer(
-                    [pair[0] for pair in batch],
-                    [pair[1] for pair in batch],
-                    padding=True,
-                    truncation=True,
-                    max_length=RERANK_MAX_LENGTH,
-                    return_tensors="pt",
-                ).to(device)
-                logits = self._hf_model(**encoded).logits
-                batch_scores = (
-                    (logits[:, 1] - logits[:, 0]).cpu().tolist()
-                    if logits.shape[-1] == 2
-                    else logits[:, 0].cpu().tolist()
-                )
-                scores.extend(batch_scores)
-        return scores
-
 
 class BaseRanker:
     def __init__(self) -> None:
@@ -956,9 +997,6 @@ class TorchRanker(BaseRanker):
     def _init_models(self) -> None:
         if self.cross_encoder is None:
             self.cross_encoder = OnnxCrossEncoder(self.cross_encoder_model_name)
-        self._init_index_models()
-
-    def _init_index_models(self) -> None:
         if self.retriever is None:
             from sentence_transformers import SentenceTransformer
 
@@ -969,15 +1007,16 @@ class TorchRanker(BaseRanker):
             )
 
     def _embed_query(self, query: str) -> np.ndarray:
-        encode_kwargs = {"normalize_embeddings": True}
-        if "query" in (getattr(self.retriever, "prompts", None) or {}):
-            encode_kwargs["prompt_name"] = "query"
-        return self.retriever.encode(query, **encode_kwargs).astype(np.float32)
+        return self.retriever.encode(
+            query,
+            normalize_embeddings=True,
+            prompt_name="query",
+        ).astype(np.float32)
 
     def _embed_documents(self, texts: list[str]) -> np.ndarray:
         return self.retriever.encode(
             texts,
-            batch_size=RETRIEVER_BATCH_SIZE,
+            batch_size=16,
             normalize_embeddings=True,
             show_progress_bar=True,
         ).astype(np.float32)
@@ -998,8 +1037,9 @@ class VulkanRanker(BaseRanker):
         self.vulkan_devices = probe_vulkan_devices()
         log_vulkan_device_status(self.vulkan_devices)
         hardware_devices = [device for device in self.vulkan_devices if not device.get("software")]
-        self.main_gpu = hardware_devices[0]["index"] if hardware_devices else None
-        self.gpu_layers = gpu_layers if self.main_gpu is not None else 0
+        preferred_devices = hardware_devices or self.vulkan_devices
+        self.main_gpu = preferred_devices[0]["index"] if preferred_devices else None
+        self.gpu_layers = gpu_layers
         self.cross_encoder_model_name = cross_encoder_model
         llama_kwargs = {
             "model_path": model_path,
@@ -1020,6 +1060,9 @@ class VulkanRanker(BaseRanker):
     def _init_models(self) -> None:
         if self.cross_encoder is None:
             self.cross_encoder = OnnxCrossEncoder(self.cross_encoder_model_name)
+
+    def _init_index_models(self) -> None:
+        return None
 
     @staticmethod
     def _extract_embedding(response):
@@ -1109,7 +1152,6 @@ def run_retrieval(
 
     candidate_ids = list(dict.fromkeys(faiss_top_ids + bm25_top_ids))
     retrieve_ms = (time.perf_counter() - retrieval_started) * 1000
-    query_intent_families = _detect_query_intent_families(query)
 
     faiss_values = list(faiss_scores.values()) or [0.0]
     min_faiss = min(faiss_values)
@@ -1117,21 +1159,17 @@ def run_retrieval(
     bm25_values = [bm25_scores.get(doc_id, 0.0) for doc_id in candidate_ids]
     min_bm25 = min(bm25_values) if bm25_values else 0.0
     max_bm25 = max(bm25_values) if bm25_values else 0.0
-    retriever_weight_total = FINAL_FAISS_WEIGHT + FINAL_BM25_WEIGHT + FINAL_LEXICAL_WEIGHT
-
     candidates = []
     for doc_id in candidate_ids:
         faiss_raw = faiss_scores.get(doc_id, 0.0)
         bm25_raw = bm25_scores.get(doc_id, 0.0)
         faiss_norm = _normalize_score(faiss_raw, min_faiss, max_faiss)
         bm25_norm = _normalize_score(bm25_raw, min_bm25, max_bm25)
-        lexical_score = _lexical_overlap_score(query, search_texts.get(doc_id, ""))
-        intent_score = _intent_alignment_score(query, doc_id, doc_texts.get(doc_id, ""))
+        retriever_weight_total = FINAL_FAISS_WEIGHT + FINAL_BM25_WEIGHT
         if retriever_weight_total > 0:
             retrieval_score = (
                 (FINAL_FAISS_WEIGHT * faiss_norm)
                 + (FINAL_BM25_WEIGHT * bm25_norm)
-                + (FINAL_LEXICAL_WEIGHT * lexical_score)
             ) / retriever_weight_total
         else:
             retrieval_score = faiss_norm
@@ -1166,8 +1204,6 @@ def run_retrieval(
                 "retrieval_score": retrieval_score,
                 "faiss_score": faiss_norm,
                 "bm25_score": bm25_norm,
-                "lexical_score": lexical_score,
-                "intent_score": intent_score,
                 "support_passages": unique_support,
             }
         )
@@ -1210,32 +1246,17 @@ def run_retrieval(
             "retrieval_score": candidate["retrieval_score"],
             "faiss_score": candidate["faiss_score"],
             "bm25_score": candidate["bm25_score"],
-            "lexical_score": candidate["lexical_score"],
-            "intent_score": candidate.get("intent_score", 0.0),
             "support_passages": candidate.get("support_passages", []),
         }
         for candidate, score in zip(candidates, rerank_scores)
     ]
     for row in results:
-        base_final_score = score_to_match(
+        row["final_score"] = score_to_match(
             row["score"],
             row.get("faiss_score", 0.0),
             row.get("bm25_score", 0.0),
-            row.get("lexical_score", 0.0),
-            row.get("intent_score", 0.0),
         )
-        if query_intent_families:
-            scenario_families = _scenario_intent_families(row["id"], doc_texts.get(row["id"], ""))
-            if row.get("intent_score", 0.0) > 0:
-                row["final_score"] = min(1.0, base_final_score + INTENT_MATCH_BOOST)
-            elif scenario_families and not (query_intent_families & scenario_families):
-                row["final_score"] = max(0.0, base_final_score * INTENT_MISMATCH_PENALTY)
-            else:
-                row["final_score"] = base_final_score
-        else:
-            row["final_score"] = base_final_score
     results.sort(key=lambda row: row["final_score"], reverse=True)
-    results = _filter_conflicting_intent_results(query, results, doc_texts)
 
     total_ms = (time.perf_counter() - started) * 1000
     final_results = results[:rerank_k]

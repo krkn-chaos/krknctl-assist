@@ -13,9 +13,9 @@ set -euo pipefail
 #   RETRIEVER_DOCKERFILE=/path/to/Dockerfile
 #   RETRIEVER_COMPAT_PORT=8080    # host port for /v1/chat/completions
 #   RETRIEVER_DEBUG_PORT=18080    # host port for /retrieve and /debug/*
-#   RETRIEVER_BACKEND=auto|torch|vulkan
+#   RETRIEVER_BACKEND=auto|vulkan
 #   RETRIEVER_MODEL=Qwen/Qwen3-Embedding-0.6B
-#   RETRIEVER_ACCELERATION=auto|gpu|cpu
+#   RETRIEVER_ACCELERATION=auto|gpu
 #   LLAMA_EMBED_MODEL=/abs/path/to/model.gguf
 #   LLAMA_RERANKER_MODEL=/abs/path/to/reranker.gguf
 #   LLAMA_GPU_LAYERS=-1
@@ -33,7 +33,7 @@ set -euo pipefail
 #   LOCAL_DOCS_PATH=/path/to/website/repo  # repo root or docs root
 #   CROSS_ENCODER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 #   RERANK_MAX_LENGTH=192
-#   RERANK_CANDIDATE_K=0       # 0 means use rerank-k as the expensive CE window
+#   RERANK_CANDIDATE_K=0       # 0 means use RERANK_TOP_FRACTION for the CE window
 #   RETRIEVER_FORCE_BUILD=1
 #   FORCE_REINDEX=true
 #   RETRIEVER_FORCE_REINDEX=1
@@ -83,7 +83,7 @@ case "$FORCE_REINDEX_RAW" in
   1|true|TRUE|yes|YES) FORCE_REINDEX="true" ;;
   *) FORCE_REINDEX="false" ;;
 esac
-BACKEND="${RETRIEVER_BACKEND:-auto}"
+BACKEND="${RETRIEVER_BACKEND:-vulkan}"
 LLAMA_EMBED_MODEL_PATH="${LLAMA_EMBED_MODEL:-}"
 LLAMA_RERANKER_MODEL_PATH="${LLAMA_RERANKER_MODEL:-}"
 LLAMA_GPU_LAYERS="${LLAMA_GPU_LAYERS:--1}"
@@ -99,15 +99,18 @@ ACCELERATION_MODE="${RETRIEVER_ACCELERATION:-auto}"
 HF_TOKEN="${HF_TOKEN:-${HUGGING_FACE_HUB_TOKEN:-${HUGGINGFACE_TOKEN:-}}}"
 CROSS_ENCODER_MODEL="${CROSS_ENCODER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}"
 RETRIEVER_MODEL="${RETRIEVER_MODEL:-Qwen/Qwen3-Embedding-0.6B}"
-RERANK_MAX_LENGTH="${RERANK_MAX_LENGTH:-192}"
+RERANK_MAX_LENGTH="${RERANK_MAX_LENGTH:-256}"
 RERANK_BATCH_SIZE="${RERANK_BATCH_SIZE:-16}"
-RERANK_DOC_CHARS="${RERANK_DOC_CHARS:-1800}"
+RERANK_DOC_CHARS="${RERANK_DOC_CHARS:-2400}"
 RERANK_THREADS="${RERANK_THREADS:-4}"
 RERANK_CANDIDATE_K="${RERANK_CANDIDATE_K:-0}"
+RERANK_TOP_FRACTION="${RERANK_TOP_FRACTION:-0.5}"
+RETRIEVAL_CANDIDATE_K="${RETRIEVAL_CANDIDATE_K:-34}"
+RERANK_SUPPORT_PASSAGES="${RERANK_SUPPORT_PASSAGES:-3}"
 RERANK_ONNX_QUANTIZE="${RERANK_ONNX_QUANTIZE:-1}"
-MIN_FAISS_SCORE="${MIN_FAISS_SCORE:-0.30}"
-MIN_CE_SCORE="${MIN_CE_SCORE:--7.0}"
-MIN_MATCH_SCORE="${MIN_MATCH_SCORE:-0.30}"
+MIN_FAISS_SCORE="${MIN_FAISS_SCORE:-0.23}"
+MIN_CE_SCORE="${MIN_CE_SCORE:--10.0}"
+MIN_MATCH_SCORE="${MIN_MATCH_SCORE:-0.10}"
 RELEVANCE_THRESHOLD="${RELEVANCE_THRESHOLD:-$MIN_MATCH_SCORE}"
 EXCLUDED_SCENARIO_IDS="${EXCLUDED_SCENARIO_IDS:-dummy-scenario}"
 INDEX_TTL_DAYS="${INDEX_TTL_DAYS:-7}"
@@ -145,20 +148,22 @@ fi
 
 # On macOS with podman, the libkrun VM provider is required for Vulkan GPU
 # passthrough via virtio-gpu/Venus.  Without this, podman silently falls back to
-# the applehv provider which has no GPU device and causes llvmpipe CPU fallback.
+# the applehv provider which has no GPU device and leaves Vulkan on llvmpipe.
 # Respect an explicit override; default to libkrun when unset.
 if [[ "$HOST_OS" == "darwin" && "$ENGINE" == "podman" && "$BACKEND" == "vulkan" ]]; then
   export CONTAINERS_MACHINE_PROVIDER="${CONTAINERS_MACHINE_PROVIDER:-libkrun}"
 fi
 
 case "$ACCELERATION_MODE" in
-  auto|gpu|cpu) ;;
-  *) echo "Error: RETRIEVER_ACCELERATION must be one of auto|gpu|cpu"; exit 1 ;;
+  auto|gpu) ;;
+  cpu) echo "Error: CPU acceleration mode is disabled; Vulkan is always used"; exit 1 ;;
+  *) echo "Error: RETRIEVER_ACCELERATION must be one of auto|gpu"; exit 1 ;;
 esac
 
 case "$BACKEND" in
-  auto|torch|vulkan) ;;
-  *) echo "Error: RETRIEVER_BACKEND must be one of auto|torch|vulkan"; exit 1 ;;
+  auto|vulkan) ;;
+  torch) echo "Error: torch backend is disabled; use RETRIEVER_BACKEND=vulkan"; exit 1 ;;
+  *) echo "Error: RETRIEVER_BACKEND must be one of auto|vulkan"; exit 1 ;;
 esac
 
 if ! command -v "$ENGINE" >/dev/null 2>&1; then
@@ -396,45 +401,54 @@ print("1" if age >= (ttl * 86400.0) else "0")
 PY
 }
 
-nvidia_runtime_available() {
-  [[ "$ENGINE" == "podman" ]] || return 1
-  "$ENGINE" run --rm \
-    --device nvidia.com/gpu=all \
-    --security-opt=label=disable \
-    --entrypoint nvidia-smi \
-    "$IMAGE" >/dev/null 2>&1
-}
+append_linux_vulkan_devices() {
+  local added_device=0
 
-gpu_runtime_supported() {
-  [[ "$ENGINE" == "podman" ]] || return 1
-  "$ENGINE" run --rm \
-    --device nvidia.com/gpu=all \
-    --security-opt=label=disable \
-    --entrypoint python3 \
-    "$IMAGE" \
-    -c "import torch; x=torch.tensor([1.0], device='cuda'); print((x+1).cpu().item())" >/dev/null 2>&1
-}
+  if [[ -e /dev/dri ]]; then
+    GPU_FLAGS+=(--device /dev/dri)
+    GPU_RUNTIME_KIND="vulkan-dri"
+    added_device=1
+  fi
 
-podman_dri_runtime_supported() {
-  [[ "$ENGINE" == "podman" ]] || return 1
-  "$ENGINE" run --rm \
-    --device /dev/dri \
-    --entrypoint sh \
-    "$IMAGE" \
-    -c "test -e /dev/dri/renderD128 || test -e /dev/dri/card0" >/dev/null 2>&1
-}
+  if [[ -e /dev/kfd ]]; then
+    GPU_FLAGS+=(--device /dev/kfd)
+    GPU_RUNTIME_KIND="${GPU_RUNTIME_KIND}+kfd"
+    added_device=1
+  fi
 
-image_torch_runtime() {
-  "$ENGINE" run --rm --entrypoint python3 "$IMAGE" \
-    -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())" 2>/dev/null || true
+  if [[ -e /dev/dxg ]]; then
+    GPU_FLAGS+=(--device /dev/dxg)
+    GPU_RUNTIME_KIND="vulkan-wsl-dxg"
+    added_device=1
+    if [[ -d /usr/lib/wsl ]]; then
+      GPU_FLAGS+=(
+        -v /usr/lib/wsl:/usr/lib/wsl:ro
+        -e "LD_LIBRARY_PATH=/usr/lib/wsl/lib:${LD_LIBRARY_PATH:-}"
+      )
+    fi
+  fi
+
+  local nvidia_dev
+  for nvidia_dev in /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools /dev/nvidia-modeset /dev/nvidia[0-9]*; do
+    if [[ -e "$nvidia_dev" ]]; then
+      GPU_FLAGS+=(--device "$nvidia_dev")
+      GPU_RUNTIME_KIND="${GPU_RUNTIME_KIND}+nvidia"
+      added_device=1
+    fi
+  done
+
+  if [[ "$added_device" == "1" && "$ENGINE" == "podman" ]]; then
+    GPU_FLAGS+=(
+      --group-add keep-groups
+      --security-opt=label=disable
+      -e NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+    )
+  fi
 }
 
 image_is_compatible() {
-  if [[ "$BACKEND" == "vulkan" ]]; then
-    "$ENGINE" run --rm --entrypoint python3 "$IMAGE" -c "import faiss, llama_cpp" >/dev/null 2>&1 || return 1
-  else
-    "$ENGINE" run --rm --entrypoint python3 "$IMAGE" -c "import faiss" >/dev/null 2>&1 || return 1
-  fi
+  "$ENGINE" run --rm --entrypoint python3 "$IMAGE" -c "import faiss, llama_cpp" >/dev/null 2>&1 || return 1
+
   # Verify image was built with the right GGML backend
   if [[ -n "$GGML_BACKEND_DESIRED" ]]; then
     local image_backend
@@ -444,6 +458,7 @@ image_is_compatible() {
       return 1
     fi
   fi
+  "$ENGINE" run --rm --entrypoint sh "$IMAGE" -c 'test "${RETRIEVER_BACKEND:-}" = "vulkan" && test -n "${LLAMA_EMBED_MODEL:-}" && test -f "$LLAMA_EMBED_MODEL"' >/dev/null 2>&1 || return 1
 }
 
 download_gguf_model() {
@@ -472,67 +487,35 @@ download_reranker_gguf_model() {
 
 configure_acceleration() {
   GPU_FLAGS=()
-  DEVICE_ARGS=(--device cpu --cpu-only)
-  GPU_RUNTIME_KIND="none"
-
-  if [[ "$BACKEND" == "torch" ]]; then
-    GGML_BACKEND_DESIRED=""
-    return
+  DEVICE_ARGS=(--device auto)
+  GPU_RUNTIME_KIND="vulkan"
+  GGML_BACKEND_DESIRED="vulkan"
+  BUILD_ARGS+=(--build-arg GGML_BACKEND=vulkan)
+  if [[ -n "$LLAMA_EMBED_MODEL_PATH" ]]; then
+    BUILD_ARGS+=(--build-arg LLAMA_EMBED_MODEL="$LLAMA_EMBED_MODEL_PATH")
   fi
 
   # macOS: Vulkan acceleration via libkrun + virtio-gpu + Mesa Venus.
   # The libkrun VM exposes /dev/dri inside the VM; podman does NOT forward it to
   # containers automatically.  --device /dev/dri is the one flag that bridges the
   # VM's DRM nodes into the container so Mesa Venus picks up real GPU hardware
-  # instead of falling back to llvmpipe (CPU software renderer).
+  # instead of llvmpipe.
   if [[ "$HOST_OS" == "darwin" || "$HOST_OS" == "macos" ]]; then
-    GGML_BACKEND_DESIRED="vulkan"
-    BUILD_ARGS+=(--build-arg GGML_BACKEND=vulkan)
     GPU_RUNTIME_KIND="vulkan-venus"
     GPU_FLAGS=(--device /dev/dri)
-    DEVICE_ARGS=(--device auto)   # let llama.cpp use Vulkan; don't force CPU
     return
   fi
 
   if [[ "$HOST_OS" == "linux" ]]; then
-    # Try NVIDIA runtime
-    if nvidia_runtime_available 2>/dev/null; then
-      if gpu_runtime_supported 2>/dev/null; then
-        GGML_BACKEND_DESIRED="cuda"
-        BUILD_ARGS+=(--build-arg GGML_BACKEND=cuda)
-        GPU_RUNTIME_KIND="nvidia-cuda"
-        GPU_FLAGS=(--device nvidia.com/gpu=all --security-opt=label=disable)
-        DEVICE_ARGS=(--device cuda)
-        return
-      fi
+    append_linux_vulkan_devices
+    if [[ ${#GPU_FLAGS[@]} -eq 0 ]]; then
+      GPU_RUNTIME_KIND="vulkan-container"
+      vlog "      No Linux GPU device nodes detected; using container-visible Vulkan devices"
     fi
-
-    # Try AMD ROCm
-    if [[ -e /dev/kfd ]]; then
-      GGML_BACKEND_DESIRED="rocm"
-      BUILD_ARGS+=(--build-arg GGML_BACKEND=rocm)
-      GPU_RUNTIME_KIND="amd-rocm"
-      GPU_FLAGS=(--device /dev/kfd --device /dev/dri --group-add keep-groups)
-      DEVICE_ARGS=(--device auto)
-      return
-    fi
-
-    # Try Intel/DRI Vulkan path
-    if [[ -e /dev/dri/renderD128 || -e /dev/dri/card0 ]]; then
-      if podman_dri_runtime_supported 2>/dev/null; then
-        GGML_BACKEND_DESIRED="vulkan"
-        BUILD_ARGS+=(--build-arg GGML_BACKEND=vulkan)
-        GPU_RUNTIME_KIND="intel-vulkan"
-        GPU_FLAGS=(--device /dev/dri)
-        DEVICE_ARGS=(--device auto)
-        return
-      fi
-    fi
+    return
   fi
 
-  # Fallback: CPU only
-  GGML_BACKEND_DESIRED="cpu"
-  BUILD_ARGS+=(--build-arg GGML_BACKEND=cpu)
+  GPU_RUNTIME_KIND="vulkan-container"
 }
 
 build_image() {
@@ -615,6 +598,9 @@ start_api_standby() {
         -e RERANK_DOC_CHARS="$RERANK_DOC_CHARS" \
         -e RERANK_THREADS="$RERANK_THREADS" \
         -e RERANK_CANDIDATE_K="$RERANK_CANDIDATE_K" \
+        -e RERANK_TOP_FRACTION="$RERANK_TOP_FRACTION" \
+        -e RETRIEVAL_CANDIDATE_K="$RETRIEVAL_CANDIDATE_K" \
+        -e RERANK_SUPPORT_PASSAGES="$RERANK_SUPPORT_PASSAGES" \
         -e RERANK_ONNX_QUANTIZE="$RERANK_ONNX_QUANTIZE" \
         -e MIN_FAISS_SCORE="$MIN_FAISS_SCORE" \
         -e MIN_CE_SCORE="$MIN_CE_SCORE" \
@@ -659,6 +645,9 @@ start_api_standby() {
         -e RERANK_DOC_CHARS="$RERANK_DOC_CHARS" \
         -e RERANK_THREADS="$RERANK_THREADS" \
         -e RERANK_CANDIDATE_K="$RERANK_CANDIDATE_K" \
+        -e RERANK_TOP_FRACTION="$RERANK_TOP_FRACTION" \
+        -e RETRIEVAL_CANDIDATE_K="$RETRIEVAL_CANDIDATE_K" \
+        -e RERANK_SUPPORT_PASSAGES="$RERANK_SUPPORT_PASSAGES" \
         -e RERANK_ONNX_QUANTIZE="$RERANK_ONNX_QUANTIZE" \
         -e MIN_FAISS_SCORE="$MIN_FAISS_SCORE" \
         -e MIN_CE_SCORE="$MIN_CE_SCORE" \
@@ -860,13 +849,8 @@ mkdir -p "$SHARED_DIR" "$HF_CACHE_DIR" "$TORCH_CACHE_DIR"
 
 # Platform-specific backend defaults
 if [[ "$BACKEND" == "auto" ]]; then
-  if [[ "$HOST_OS" == "darwin" || "$HOST_OS" == "macos" ]]; then
-    BACKEND="vulkan"
-    vlog "macOS detected; using llama.cpp Vulkan backend for local setup"
-  else
-    BACKEND="torch"
-    vlog "$HOST_OS detected; using torch backend"
-  fi
+  BACKEND="vulkan"
+  vlog "$HOST_OS detected; using llama.cpp Vulkan backend"
 fi
 
 # Resolve GGUF models for vulkan backend
@@ -895,6 +879,11 @@ if [[ "$BACKEND" == "vulkan" ]]; then
 
   LLAMA_MODEL_ABS="$(cd "$(dirname "$LLAMA_EMBED_MODEL_PATH")" && pwd)/$(basename "$LLAMA_EMBED_MODEL_PATH")"
   LLAMA_MODEL_BASENAME="$(basename "$LLAMA_MODEL_ABS")"
+  if [[ "$(dirname "$LLAMA_MODEL_ABS")" != "$ROOT_DIR/models" ]]; then
+    mkdir -p "$ROOT_DIR/models"
+    cp -f "$LLAMA_MODEL_ABS" "$ROOT_DIR/models/$LLAMA_MODEL_BASENAME"
+    LLAMA_MODEL_ABS="$ROOT_DIR/models/$LLAMA_MODEL_BASENAME"
+  fi
   LLAMA_EMBED_MODEL_PATH="/models/$LLAMA_MODEL_BASENAME"
   LLAMA_MOUNT_ARGS=(-v "$(dirname "$LLAMA_MODEL_ABS"):/models$MOUNT_LABEL_SUFFIX")
 fi
@@ -1009,6 +998,9 @@ if [[ "$should_reindex" == "1" ]]; then
     -e RERANK_DOC_CHARS="$RERANK_DOC_CHARS" \
     -e RERANK_THREADS="$RERANK_THREADS" \
     -e RERANK_CANDIDATE_K="$RERANK_CANDIDATE_K" \
+    -e RERANK_TOP_FRACTION="$RERANK_TOP_FRACTION" \
+    -e RETRIEVAL_CANDIDATE_K="$RETRIEVAL_CANDIDATE_K" \
+    -e RERANK_SUPPORT_PASSAGES="$RERANK_SUPPORT_PASSAGES" \
     -e RERANK_ONNX_QUANTIZE="$RERANK_ONNX_QUANTIZE" \
     -e MIN_FAISS_SCORE="$MIN_FAISS_SCORE" \
     -e MIN_CE_SCORE="$MIN_CE_SCORE" \

@@ -28,7 +28,7 @@ from .settings import (
 logger = logging.getLogger(__name__)
 
 DEVICE = os.environ.get("RETRIEVER_DEVICE", DEFAULT_DEVICE)
-CPU_ONLY = os.environ.get("RETRIEVER_CPU_ONLY", "1" if DEFAULT_CPU_ONLY else "0") == "1"
+CPU_ONLY = False
 BACKEND = os.environ.get("RETRIEVER_BACKEND", DEFAULT_BACKEND)
 LLAMA_MODEL = os.environ.get("LLAMA_EMBED_MODEL", DEFAULT_LLAMA_MODEL)
 LLAMA_GPU_LAYERS = int(os.environ.get("LLAMA_GPU_LAYERS", str(DEFAULT_LLAMA_GPU_LAYERS)))

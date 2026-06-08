@@ -57,4 +57,3 @@ Suggested command: krknctl run pod-network-filter
 | `krknctl-assist` | Start the interactive assistant |
 | `krknctl-assist --force-build` | Force a rebuild |
 | `krknctl-assist --cleanup` | Clean up local containers |
-
