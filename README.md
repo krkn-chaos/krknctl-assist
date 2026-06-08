@@ -58,3 +58,26 @@ Suggested command: krknctl run pod-network-filter
 | `krknctl-assist --force-build` | Force a rebuild |
 | `krknctl-assist --cleanup` | Clean up local containers |
 
+## Running Benchmarks
+
+The benchmark uses the debug API, not the OpenAI-compatible API. Keep
+`./scripts/pipeline.sh --verbose` running in one terminal so the debug endpoint
+stays available on `http://127.0.0.1:18080/retrieve`, then run the benchmark in a
+second terminal.
+
+```bash
+# Terminal 1: start the debug API and leave it open
+./scripts/pipeline.sh --verbose
+
+# Terminal 2: run a 100-query benchmark
+mkdir -p bench-res
+RUN_DIR="bench-res/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$RUN_DIR"
+python3 scripts/benchmark.py --n 100 --fr 10 --out "$RUN_DIR/benchmark.json"
+```
+
+For a full run:
+
+```bash
+python3 scripts/benchmark.py --n 1000 --fr 100 --out "$RUN_DIR/final.json"
+```

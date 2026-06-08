@@ -63,89 +63,6 @@ class IndexEntry:
     passage: str
 
 
-_SCENARIO_PROFILE_HINTS = {
-    "application-outages": (
-        "Use for application-level outages, route or URL downtime, 503/gateway timeout, "
-        "and ingress or egress traffic blocks that make application pods unreachable."
-    ),
-    "container-scenarios": (
-        "Use for killing, hanging, restarting, or disrupting a specific container process "
-        "inside a pod while the parent pod object remains in scope."
-    ),
-    "kubevirt-outage": (
-        "Use for KubeVirt, VM, VMI, virtual machine deletion, virtualized workload outage, "
-        "or CNV/OpenShift virtualization failure testing."
-    ),
-    "network-chaos": (
-        "Use for host or node network degradation with latency, jitter, packet loss, "
-        "bandwidth throttling, ingress/egress shaping, tc, or netem."
-    ),
-    "node-cpu-hog": (
-        "Use for node CPU pressure, CPU hogs, high core usage, processor saturation, "
-        "or stress-ng CPU load on worker nodes."
-    ),
-    "node-io-hog": (
-        "Use for node disk I/O pressure, heavy reads or writes, storage bus saturation, "
-        "I/O hogs, and write-byte stress on nodes."
-    ),
-    "node-memory-hog": (
-        "Use for node memory pressure, RAM exhaustion, OOM conditions, heap leaks, "
-        "and memory hogs on worker nodes."
-    ),
-    "node-network-filter": (
-        "Use for node or host iptables filtering, blocking node ingress or egress, "
-        "ports, protocols, interfaces, host firewalls, and unreachable nodes."
-    ),
-    "node-scenarios": (
-        "Use for node reboot, stop, start, termination, cloud instance replacement, "
-        "kubelet stop-start, and cloud-provider node lifecycle faults."
-    ),
-    "node-scenarios-bm": (
-        "Use for bare-metal node outage, IPMI/BMC fencing, physical server freeze, "
-        "hardware disruption, and out-of-band recovery drills."
-    ),
-    "pod-network-chaos": (
-        "Use for pod network outage or isolation using ingress/egress traffic type, "
-        "pod ports, OVS flow rules, and blocking pod connectivity."
-    ),
-    "pod-network-filter": (
-        "Use for pod-level iptables filtering, privileged network filter workloads, "
-        "ports, protocols, interfaces, TCP/UDP filtering, and pod firewalls."
-    ),
-    "pod-scenarios": (
-        "Use for pod deletion, pod failure, pod crash, eviction, killing pods, "
-        "replica recovery, and workload rescheduling after pods disappear."
-    ),
-    "power-outages": (
-        "Use for cluster-wide power loss, cluster shutdown, infrastructure goes dark, "
-        "facility electricity failure, and disaster recovery power drills."
-    ),
-    "pvc-scenarios": (
-        "Use for filling a PVC, persistent volume claim disk-full tests, NoSpaceLeftOnDevice, "
-        "storage quota exhaustion, and runaway logging consuming a mounted volume."
-    ),
-    "service-disruption-scenarios": (
-        "Use for service object deletion or service disruption in a namespace, deleting "
-        "resources by label, namespace/project disruption, and GitOps rebuild drills."
-    ),
-    "service-hijacking": (
-        "Use for service hijacking, fake or spoofed HTTP responses, mocked payloads, "
-        "man-in-the-middle service replies, and rerouting internal service traffic."
-    ),
-    "syn-flood": (
-        "Use for TCP SYN flood, half-open connection floods, layer-4 DDoS, botnet-like "
-        "connection surges, and connection tracking exhaustion."
-    ),
-    "time-scenarios": (
-        "Use for time skew, clock drift, date changes, NTP/synchronization faults, "
-        "certificate validity time issues, and server clock jumps."
-    ),
-    "zone-outages": (
-        "Use for availability-zone outage, AZ failure, regional zone partition, subnet "
-        "isolation, data-center zone failure, and cloud zone connectivity loss."
-    ),
-}
-
 _GENERIC_PARAMETER_NAMES = {
     "aws-access-key-id",
     "aws-default-region",
@@ -165,8 +82,6 @@ _GENERIC_PARAMETER_NAMES = {
     "wait-duration",
 }
 
-_SCHEMA_FINAL_WEIGHT = 0.42
-_SCHEMA_CANDIDATE_WEIGHT = 0.45
 _MAX_SECTION_ENTRIES_PER_SCENARIO = 4
 
 
@@ -296,138 +211,6 @@ def _bm25_scores(query: str, doc_ids: list[str], doc_texts: dict[str, str]) -> d
             denom = tf + BM25_K1 * (1.0 - BM25_B + BM25_B * (dl / avgdl if avgdl else 0.0))
             score += idf * ((tf * (BM25_K1 + 1.0)) / (denom if denom else 1.0))
         scores[doc_id] = score
-    return scores
-
-
-def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
-    return any(phrase in text for phrase in phrases)
-
-
-def _schema_scores(query: str, scenario_ids: list[str]) -> dict[str, float]:
-    normalized_query = re.sub(r"\s+", " ", (query or "").lower())
-    query_terms = set(_tokenize(normalized_query))
-    scores = {scenario_id: 0.0 for scenario_id in scenario_ids}
-
-    def boost(scenario_id: str, score: float = 1.0) -> None:
-        if scenario_id in scores:
-            scores[scenario_id] = max(scores[scenario_id], score)
-
-    if {"container", "containers", "sidecar"} & query_terms:
-        boost("container-scenarios")
-    if "kubevirt" in query_terms or "vmi" in query_terms or "vm" in query_terms or _contains_any(
-        normalized_query,
-        ("virtual machine", "virtualized", "cnv", "kill count"),
-    ):
-        boost("kubevirt-outage")
-    if "timeout" in query_terms and {"iteration", "iterations"} & query_terms and "namespace" in query_terms:
-        boost("kubevirt-outage", 0.95)
-    if "syn" in query_terms or _contains_any(
-        normalized_query,
-        ("half-open", "connection flood", "tcp flood", "ddos"),
-    ):
-        boost("syn-flood")
-    if "pvc" in query_terms or _contains_any(
-        normalized_query,
-        ("persistent volume claim", "disk fill", "full disk", "fills up", "fill pvc", "nospaceleft", "no space left", "storage quota"),
-    ):
-        boost("pvc-scenarios")
-    if "cpu" in query_terms or _contains_any(
-        normalized_query,
-        ("processor", "core usage", "hardware threads", "computation cycles"),
-    ):
-        boost("node-cpu-hog")
-    if "memory" in query_terms or "ram" in query_terms or _contains_any(
-        normalized_query,
-        ("oom", "heap leak", "free ram", "physical memory"),
-    ):
-        boost("node-memory-hog")
-    if "i/o" in normalized_query or _contains_any(
-        normalized_query,
-        ("disk stress", "disk pressure", "storage bus", "sequential writes", "read latency", "write bytes"),
-    ):
-        boost("node-io-hog")
-    if _contains_any(normalized_query, ("bare metal", "baremetal", "ipmi", "bmc", "physical hardware", "rack server", "fencing")):
-        boost("node-scenarios-bm")
-    if _contains_any(normalized_query, ("power", "electricity", "cluster shutdown", "cluster goes dark", "facility failure", "disaster recovery")):
-        boost("power-outages")
-    if "zone" in query_terms or "az" in query_terms or _contains_any(
-        normalized_query,
-        ("availability zone", "data center", "datacenter", "subnet", "regional zone"),
-    ):
-        boost("zone-outages")
-    if "time" in query_terms or "clock" in query_terms or "date" in query_terms or _contains_any(
-        normalized_query,
-        ("skew", "drift", "ntp", "synchronization", "server clock"),
-    ):
-        boost("time-scenarios")
-    if _contains_any(normalized_query, ("hijack", "fake", "spoof", "mock", "man-in-the-middle", "wrong mime", "custom 500", "custom 404")):
-        boost("service-hijacking")
-    if "service" in query_terms and {"disruption", "chaos", "delete", "deleting", "objects", "resources"} & query_terms:
-        boost("service-disruption-scenarios")
-    if _contains_any(normalized_query, ("service disruption", "service chaos", "delete service", "deleting service")):
-        boost("service-disruption-scenarios")
-    if "pod" in query_terms or "pods" in query_terms:
-        if {"filter", "iptables", "protocol", "protocols", "tcp", "udp", "port", "ports", "eth0"} & query_terms:
-            boost("pod-network-filter")
-        if _contains_any(normalized_query, ("network disruptions on pods", "block ingress on pod", "block egress on pod")):
-            boost("pod-network-filter")
-        if _contains_any(normalized_query, ("pod network chaos", "pod network outage", "network isolation for pods", "ovs pod", "pod traffic", "block pod ingress", "block pod egress")) or (
-            _contains_any(normalized_query, ("for pods with label",))
-            and not ({"container", "containers"} & query_terms)
-        ):
-            boost("pod-network-chaos")
-        elif {"network", "traffic", "ingress", "egress", "isolation", "block", "blocking", "outbound"} & query_terms:
-            boost("pod-network-chaos", 0.45)
-        if {"delete", "deleting", "failure", "crash", "evict", "eviction", "kill", "terminating", "termination"} & query_terms and not ({"container", "containers"} & query_terms):
-            boost("pod-scenarios")
-    if "node" in query_terms or "nodes" in query_terms or "host" in query_terms or "worker" in query_terms or "master" in query_terms:
-        if {"filter", "iptables", "protocol", "protocols", "tcp", "udp", "port", "ports", "interface", "interfaces", "eth0"} & query_terms:
-            boost("node-network-filter", 0.95)
-        if {"latency", "loss", "bandwidth", "jitter", "degradation", "network", "egress", "ingress"} & query_terms:
-            boost("network-chaos", 0.9)
-        if {"reboot", "start", "stop", "termination", "terminate", "replace", "kubelet"} & query_terms:
-            boost("node-scenarios")
-        if _contains_any(normalized_query, ("node chaos", "node outage")) and not (
-            {"reboot", "start", "stop", "termination", "terminate", "filter", "port", "latency", "loss", "bandwidth"} & query_terms
-        ):
-            boost("node-scenarios-bm", 0.9)
-    if _contains_any(normalized_query, ("latency", "packet loss", "bandwidth", "jitter", "network degradation", "network fault", "bad switch", "uplink")):
-        boost("network-chaos", 0.9)
-    if (
-        {"ingress", "egress", "traffic", "block", "blocking"} & query_terms
-        and not ({"pod", "pods", "node", "nodes", "host"} & query_terms)
-    ):
-        boost("network-chaos")
-    if "port" in query_terms and {"ingress", "egress", "block", "blocking"} & query_terms and not ({"pod", "pods"} & query_terms):
-        boost("node-network-filter")
-    if _contains_any(normalized_query, ("network filter", "pod filter")) and not ({"node", "nodes", "host"} & query_terms):
-        boost("pod-network-filter")
-    if {"interface", "interfaces", "eth0", "eth1"} & query_terms and {"block", "blocking", "traffic", "network"} & query_terms and not ({"pod", "pods"} & query_terms):
-        boost("node-network-filter")
-    if "namespace" in query_terms and {"ingress", "egress", "traffic", "block", "blocking", "outage"} & query_terms and not (
-        {"node", "nodes", "host", "latency", "loss", "bandwidth", "jitter", "filter", "port"} & query_terms
-    ):
-        boost("application-outages")
-    if (
-        {"application", "app", "web", "frontend", "route", "url", "external", "user", "users"} & query_terms
-        and {"outage", "block", "blocking", "traffic", "unreachable", "ingress", "egress"} & query_terms
-    ):
-        boost("application-outages")
-    if _contains_any(normalized_query, ("pods labeled app", "pods labeled service", "pods with label app", "target pods with label app")) and {
-        "traffic",
-        "block",
-        "blocking",
-        "blockage",
-        "ingress",
-        "egress",
-        "fault",
-    } & query_terms:
-        boost("application-outages")
-    if _contains_any(normalized_query, ("application outage", "app outage", "web app", "frontend service", "public url", "503", "gateway timeout")):
-        boost("application-outages")
-    if _contains_any(normalized_query, ("fault injection scenario", "container failure experiment")):
-        boost("container-scenarios")
-
     return scores
 
 
@@ -624,9 +407,6 @@ def _scenario_profile_text(scenario_id: str, text: str) -> str:
         f"Aliases: {', '.join(aliases)}",
         f"Runnable command: {_extract_run_command(text, scenario_id)}",
     ]
-    hint = _SCENARIO_PROFILE_HINTS.get(scenario_id)
-    if hint:
-        parts.append(f"Scenario retrieval profile: {hint}")
     if summary:
         parts.append(f"Documentation summary: {summary}")
     if parameter_names:
@@ -862,7 +642,7 @@ def resolve_device(device_preference: str = "auto", cpu_only: bool = False) -> s
 def resolve_backend(backend: str, llama_model_path: str) -> str:
     if backend in {"torch", "vulkan"}:
         return backend
-    return "vulkan" if llama_model_path else "torch"
+    return "vulkan"
 
 
 def compact_for_reranking(text: str) -> str:
@@ -1356,8 +1136,6 @@ def run_retrieval(
         faiss_scores[scenario_id] = (0.8 * best) + (0.2 * mean_top)
 
     scenario_ids = sorted(set(doc_ids) | set(doc_texts.keys()))
-    schema_scores = _schema_scores(query, scenario_ids)
-    has_schema_signal = any(score > 0.0 for score in schema_scores.values())
     bm25_scores = _bm25_scores(query, scenario_ids, search_texts)
     candidate_k = min(
         len(scenario_ids),
@@ -1426,16 +1204,11 @@ def run_retrieval(
                 "retrieval_score": retrieval_score,
                 "faiss_score": faiss_norm,
                 "bm25_score": bm25_norm,
-                "schema_score": schema_scores.get(doc_id, 0.0),
                 "support_passages": unique_support,
             }
         )
 
-    candidates.sort(
-        key=lambda row: row["retrieval_score"]
-        + (_SCHEMA_CANDIDATE_WEIGHT * row.get("schema_score", 0.0)),
-        reverse=True,
-    )
+    candidates.sort(key=lambda row: row["retrieval_score"], reverse=True)
     if not candidates:
         return []
 
@@ -1473,24 +1246,16 @@ def run_retrieval(
             "retrieval_score": candidate["retrieval_score"],
             "faiss_score": candidate["faiss_score"],
             "bm25_score": candidate["bm25_score"],
-            "schema_score": candidate.get("schema_score", 0.0),
             "support_passages": candidate.get("support_passages", []),
         }
         for candidate, score in zip(candidates, rerank_scores)
     ]
     for row in results:
-        base_score = score_to_match(
+        row["final_score"] = score_to_match(
             row["score"],
             row.get("faiss_score", 0.0),
             row.get("bm25_score", 0.0),
         )
-        if has_schema_signal:
-            row["final_score"] = (
-                ((1.0 - _SCHEMA_FINAL_WEIGHT) * base_score)
-                + (_SCHEMA_FINAL_WEIGHT * float(row.get("schema_score", 0.0)))
-            )
-        else:
-            row["final_score"] = base_score
     results.sort(key=lambda row: row["final_score"], reverse=True)
 
     total_ms = (time.perf_counter() - started) * 1000
