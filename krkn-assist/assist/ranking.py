@@ -593,15 +593,15 @@ def _scenario_support_text(
     support_passages: list[str],
 ) -> str:
     parts = [_scenario_profile_text(scenario_id, scenario_text)]
+    parameter_profile = _parameter_profile(_extract_parameters(scenario_text), limit=12)
+    if parameter_profile:
+        parts.append(parameter_profile)
 
     if support_passages:
         parts.append("Top matching documentation passages:")
         parts.extend(support_passages[: max(1, RERANK_SUPPORT_PASSAGES)])
     else:
-        parameter_profile = _parameter_profile(_extract_parameters(scenario_text), limit=12)
-        if parameter_profile:
-            parts.append(parameter_profile)
-        else:
+        if not parameter_profile:
             parts.append(compact_for_reranking(_strip_frontmatter(scenario_text)))
 
     return compact_for_reranking("\n\n".join(parts))
