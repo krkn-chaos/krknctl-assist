@@ -153,15 +153,10 @@ async def chat_completions(request: QueryRequest):
 
     if not decision.scenarios:
         response_content = "No confident scenario match found"
-    elif len(decision.scenarios) == 1:
-        response_content = f"Scenario: {decision.scenarios[0]['name']}"
     else:
-        lines = ["Scenarios:"]
-        lines.extend(
-            f"{idx}. {row['name']}"
-            for idx, row in enumerate(decision.scenarios, start=1)
-        )
-        response_content = "\n".join(lines)
+        # Keep multi-match selection internally, but only surface the primary
+        # scenario in chat responses for now.
+        response_content = f"Scenario: {decision.scenarios[0]['name']}"
 
     prompt_tokens = len(user_query.split())
     completion_tokens = len(response_content.split())
