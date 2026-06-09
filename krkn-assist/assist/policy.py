@@ -13,24 +13,6 @@ from .settings import (
     MULTI_MATCH_SCORE_GAP,
 )
 
-_INTENT_FAMILY_KEYWORDS = {
-    "pod": {"pod", "pods"},
-    "container": {"container", "containers"},
-    "node": {"node", "nodes", "worker", "workers"},
-    "service": {"service", "services"},
-    "network": {"network", "latency", "packet", "packets", "bandwidth", "ingress", "egress"},
-    "dns": {"dns"},
-    "pvc": {"pvc", "persistentvolumeclaim", "persistent-volume-claim"},
-    "time": {"time", "clock"},
-    "zone": {"zone", "zones", "zonal"},
-    "power": {"power", "outage", "outages"},
-    "memory": {"memory", "ram"},
-    "cpu": {"cpu"},
-    "io": {"io", "disk", "storage"},
-    "http": {"http"},
-    "vmi": {"vmi", "vm", "vms", "virtualmachine", "virtualmachines", "kubevirt"},
-}
-
 
 @dataclass(frozen=True)
 class PolicyDecision:
@@ -56,40 +38,6 @@ def _dedupe_evidence(evidence: list[dict]) -> list[dict]:
     return sorted(best_by_id.values(), key=_score_key, reverse=True)
 
 
-def _tokenize(text: str) -> set[str]:
-    import re
-
-    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
-
-
-def _query_intent_families(query: str) -> set[str]:
-    query_terms = _tokenize(query)
-    families = {
-        family
-        for family, keywords in _INTENT_FAMILY_KEYWORDS.items()
-        if query_terms & keywords
-    }
-    if "container" in families:
-        families.discard("pod")
-    return families
-
-
-def _scenario_families(scenario_id: str) -> set[str]:
-    scenario_terms = _tokenize(scenario_id.replace("-", " "))
-    families = {
-        family
-        for family, keywords in _INTENT_FAMILY_KEYWORDS.items()
-        if scenario_terms & keywords
-    }
-    if scenario_id.startswith("pod-"):
-        families.add("pod")
-    if scenario_id.startswith("container-"):
-        families.add("container")
-    if scenario_id.startswith("node-"):
-        families.add("node")
-    return families
-
-
 def decide_scenarios(
     *,
     query: str,
@@ -110,7 +58,6 @@ def decide_scenarios(
     threshold = float(MIN_MATCH_SCORE if threshold is None else threshold)
     query = (query or "").strip()
     evidence = _dedupe_evidence(evidence)
-    query_families = _query_intent_families(query)
 
     if len(query.split()) < MIN_QUERY_WORDS:
         return PolicyDecision(
@@ -167,14 +114,6 @@ def decide_scenarios(
     if ambiguous and allow_multi:
         multi_threshold = max(threshold, MIN_MULTI_SCORE)
         for row in evidence[: max(1, MAX_MULTI_SCENARIOS)]:
-            scenario_id = str(row.get("id") or "").strip()
-            scenario_families = _scenario_families(scenario_id)
-            if (
-                query_families
-                and scenario_families
-                and not (query_families & scenario_families)
-            ):
-                continue
             if float(row.get("final_score", 0.0)) >= multi_threshold:
                 accepted_rows.append(row)
     else:
