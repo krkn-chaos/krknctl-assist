@@ -1,6 +1,6 @@
 # Benchmark Results
 
-The current `krknctl-assist` benchmark run completed **290 queries** with **0 errors**.
+The current `krknctl-assist` benchmark run completed **290 queries**.
 
 ## Summary
 
