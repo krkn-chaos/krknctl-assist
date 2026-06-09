@@ -51,11 +51,12 @@ The benchmark uses the debug API, not the OpenAI-compatible API. Keep
 ./scripts/pipeline.sh --verbose
 
 # Terminal 2: run the benchmark
-mkdir -p bench-res
-RUN_DIR="bench-res/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p benchmark-results
+RUN_DIR="benchmark-results/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$RUN_DIR"
 python3 scripts/benchmark.py \
   --csv krkn-assist/mini-bench.csv \
+  --base-url http://127.0.0.1:18080 \
   --n 0 \
   --fr 100 \
   --out "$RUN_DIR/benchmark.json"
