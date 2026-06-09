@@ -9,7 +9,12 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List
 
-from .settings import EXCLUDED_SCENARIO_IDS, MERGED_DOCS_DEBUG_DIR, NON_SCENARIO_DOCS
+from .settings import (
+    CONTEXT_AUGMENTATION_PATH,
+    EXCLUDED_SCENARIO_IDS,
+    MERGED_DOCS_DEBUG_DIR,
+    NON_SCENARIO_DOCS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +40,12 @@ _SCENARIO_ID_ALIASES = {
     "pvc-scenario": "pvc-scenarios",
     "storage-throttle-scenario": "storage-throttle",
 }
+_AUGMENTATION_LABELS = (
+    ("good_for", "Best fit when"),
+    ("not_for", "Less suitable when"),
+    ("prefer_instead", "Prefer another scenario when"),
+    ("keywords", "Helpful phrases"),
+)
 
 
 def _canonical_scenario_id(scenario_id: str) -> str:
@@ -137,6 +148,116 @@ def _append_doc(doc_map: Dict[str, List[str]], scenario_id: str, content: str) -
         if normalized in existing_normalized or existing_normalized in normalized:
             return
     parts.append(content.strip())
+
+
+def _load_context_augmentations(path: str = CONTEXT_AUGMENTATION_PATH) -> dict[str, dict]:
+    augmentation_path = Path(path)
+    if not augmentation_path.exists():
+        return {}
+
+    try:
+        payload = json.loads(augmentation_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to parse context augmentation file %s: %s", augmentation_path, exc)
+        return {}
+
+    if not isinstance(payload, dict):
+        logger.warning("Unexpected context augmentation format in %s", augmentation_path)
+        return {}
+
+    scenarios = payload.get("scenarios", payload)
+    if not isinstance(scenarios, dict):
+        logger.warning("Context augmentation file %s does not contain a scenarios map", augmentation_path)
+        return {}
+
+    normalized: dict[str, dict] = {}
+    for scenario_id, entry in scenarios.items():
+        if isinstance(entry, dict):
+            normalized[_canonical_scenario_id(str(scenario_id))] = entry
+    return normalized
+
+
+def _format_prefer_instead(items: list[object]) -> list[str]:
+    lines: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            cleaned = item.strip()
+            if cleaned:
+                lines.append(cleaned)
+            continue
+        if not isinstance(item, dict):
+            continue
+        scenario = str(item.get("scenario", "")).strip()
+        when = str(item.get("when", "")).strip()
+        why = str(item.get("because", "")).strip()
+        parts = []
+        if scenario:
+            parts.append(f"`{scenario}`")
+        if when:
+            parts.append(when)
+        if why:
+            parts.append(why)
+        if parts:
+            lines.append(" - ".join(parts))
+    return lines
+
+
+def _render_context_augmentation(scenario_id: str, augmentation: dict) -> str:
+    lines = [
+        "## Retrieval Disambiguation Notes",
+        "",
+        "Supplemental retrieval context added to improve scenario differentiation.",
+        "",
+    ]
+
+    summary = str(augmentation.get("summary", "")).strip()
+    if summary:
+        lines.extend([summary, ""])
+
+    for key, label in _AUGMENTATION_LABELS:
+        raw_items = augmentation.get(key, [])
+        if isinstance(raw_items, str):
+            items = [raw_items.strip()] if raw_items.strip() else []
+        elif isinstance(raw_items, list):
+            if key == "prefer_instead":
+                items = _format_prefer_instead(raw_items)
+            else:
+                items = [str(item).strip() for item in raw_items if str(item).strip()]
+        else:
+            items = []
+        if not items:
+            continue
+        lines.append(f"### {label}")
+        lines.extend(f"- {item}" for item in items)
+        lines.append("")
+
+    aliases = augmentation.get("aliases", [])
+    if isinstance(aliases, list):
+        alias_items = [str(item).strip() for item in aliases if str(item).strip()]
+        if alias_items:
+            lines.append(f"Common wording for `{scenario_id}`: {', '.join(alias_items)}")
+            lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _apply_context_augmentations(doc_map: Dict[str, List[str]]) -> None:
+    augmentations = _load_context_augmentations()
+    if not augmentations:
+        return
+
+    applied = 0
+    for scenario_id, augmentation in augmentations.items():
+        if scenario_id not in doc_map:
+            continue
+        rendered = _render_context_augmentation(scenario_id, augmentation)
+        if not rendered:
+            continue
+        _append_doc(doc_map, scenario_id, rendered)
+        applied += 1
+
+    if applied:
+        logger.info("Applied context augmentation to %d scenarios", applied)
 
 
 def _merge_docs(doc_map: Dict[str, List[str]]) -> list[tuple[str, str]]:
@@ -416,6 +537,8 @@ def build_scenario_documents(
             scenario_inputs = {}
         for scenario_id, content in scenario_inputs.items():
             _append_doc(scenario_parts, scenario_id, content)
+
+    _apply_context_augmentations(scenario_parts)
 
     merged_docs = _merge_docs(scenario_parts)
     persist_merged_scenario_docs(merged_docs)

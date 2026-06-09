@@ -67,6 +67,10 @@ REPO_PATH = os.environ.get("REPO_PATH", "content/en/docs")
 KRKN_HUB_REPO = os.environ.get("KRKN_HUB_REPO", "https://github.com/krkn-chaos/krkn-hub")
 KRKN_HUB_BRANCH = os.environ.get("KRKN_HUB_BRANCH")
 LOCAL_DOCS_PATH = os.environ.get("LOCAL_DOCS_PATH")
+CONTEXT_AUGMENTATION_PATH = os.environ.get(
+    "CONTEXT_AUGMENTATION_PATH",
+    os.path.join(os.path.dirname(__file__), "context_augmentation.json"),
+)
 EXCLUDED_SCENARIO_IDS = {
     scenario_id.strip()
     for scenario_id in os.environ.get("EXCLUDED_SCENARIO_IDS", "").split(",")

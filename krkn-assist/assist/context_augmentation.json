@@ -1,0 +1,369 @@
+{
+  "_schema_version": 1,
+  "scenarios": {
+    "application-outages": {
+      "summary": "Targets one application or workload by label and blocks ingress and/or egress traffic for a bounded outage window without deleting pods.",
+      "good_for": [
+        "application-level downtime where dependent services should lose access temporarily",
+        "cutting ingress, egress, or both for a selected app",
+        "testing retries, alerts, failover, and dependency timeout behavior while pods stay running"
+      ],
+      "not_for": [
+        "deleting pods or containers to force restarts",
+        "port-specific filtering on a small set of ports",
+        "database-only or DNS-only egress failures"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "pod-scenarios",
+          "when": "the goal is to delete or disrupt pod objects themselves"
+        },
+        {
+          "scenario": "pod-network-chaos",
+          "when": "the goal is pod network blocking tied to pod networking behavior or OVS flow handling"
+        },
+        {
+          "scenario": "pod-network-filter",
+          "when": "the goal is filtering only specific ports or protocols instead of a broader app outage"
+        }
+      ],
+      "keywords": [
+        "application outage",
+        "app unreachable",
+        "frontend outage",
+        "dependency timeout",
+        "controlled downtime"
+      ]
+    },
+    "dns-outage": {
+      "summary": "Blocks only DNS traffic from a target pod so the workload keeps running and general connectivity can remain intact while hostname resolution fails.",
+      "good_for": [
+        "service discovery or hostname resolution failures",
+        "breaking DNS lookups over UDP and TCP from one workload",
+        "name resolution outages without deleting pods"
+      ],
+      "not_for": [
+        "high packet volume attacks",
+        "general network isolation unrelated to DNS",
+        "broad ingress and egress outages for the whole application"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "syn-flood",
+          "when": "the goal is overwhelming a service with TCP SYN traffic rather than blocking DNS"
+        },
+        {
+          "scenario": "application-outages",
+          "when": "the goal is making the application broadly unreachable instead of only breaking name resolution"
+        }
+      ],
+      "keywords": [
+        "DNS outage",
+        "service discovery failure",
+        "hostname resolution",
+        "cannot resolve names",
+        "cluster DNS"
+      ]
+    },
+    "http-load": {
+      "summary": "Generates sustained HTTP request traffic against a target endpoint or service to measure latency, throughput, saturation, and error behavior under web load.",
+      "good_for": [
+        "fan-out HTTP or web traffic to a service",
+        "latency and error observation under sustained request load",
+        "load testing at the application HTTP layer"
+      ],
+      "not_for": [
+        "packet loss, bandwidth shaping, or latency injection at the network layer",
+        "TCP SYN attack behavior",
+        "generic node or pod disruption without request generation"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "network-chaos",
+          "when": "the goal is network impairment such as loss, delay, or bandwidth control"
+        },
+        {
+          "scenario": "syn-flood",
+          "when": "the goal is connection flood behavior instead of normal HTTP request load"
+        }
+      ],
+      "keywords": [
+        "HTTP load",
+        "web traffic",
+        "request fan out",
+        "latency under load",
+        "load generation"
+      ]
+    },
+    "network-chaos": {
+      "summary": "Applies network impairments such as latency, jitter, loss, duplication, corruption, or bandwidth constraints rather than fully blocking traffic on selected ports.",
+      "good_for": [
+        "degrading network quality without complete service shutdown",
+        "testing latency, packet loss, corruption, or limited bandwidth",
+        "simulating unreliable networks instead of hard traffic denial"
+      ],
+      "not_for": [
+        "complete DNS outage only",
+        "exact port-based firewall rules",
+        "HTTP request generation or SYN attack traffic"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "node-network-filter",
+          "when": "the goal is precise ingress or egress blocking on chosen ports"
+        },
+        {
+          "scenario": "http-load",
+          "when": "the goal is generating application traffic rather than impairing the network path"
+        },
+        {
+          "scenario": "syn-flood",
+          "when": "the goal is volumetric SYN traffic to stress a listener"
+        }
+      ],
+      "keywords": [
+        "packet loss",
+        "latency injection",
+        "bandwidth limit",
+        "jitter",
+        "network degradation"
+      ]
+    },
+    "node-scenarios": {
+      "summary": "Runs cloud or platform node lifecycle disruptions such as reboot, stop, start, terminate, or kubelet operations against cluster nodes.",
+      "good_for": [
+        "node reboot, stop, start, terminate, or kubelet lifecycle workflows",
+        "cloud-backed or general node disruption scenarios",
+        "node availability and lifecycle resilience testing"
+      ],
+      "not_for": [
+        "bare-metal IPMI or BMC power control specifics",
+        "node CPU, memory, or I/O stress only",
+        "simple port-level firewall rules"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "node-scenarios-bm",
+          "when": "the target environment is bare metal and the action goes through BMC or IPMI"
+        },
+        {
+          "scenario": "node-network-filter",
+          "when": "the goal is blocking traffic on ports rather than lifecycle disruption"
+        }
+      ],
+      "keywords": [
+        "node reboot",
+        "node termination",
+        "kubelet restart",
+        "node lifecycle",
+        "cloud node disruption"
+      ]
+    },
+    "node-scenarios-bm": {
+      "summary": "Handles bare-metal node disruption through BMC or IPMI-driven power operations and similar hardware-oriented lifecycle actions.",
+      "good_for": [
+        "bare-metal node power management",
+        "IPMI or BMC controlled stop, start, reboot, or power-cycle testing",
+        "hardware-backed node lifecycle exercises"
+      ],
+      "not_for": [
+        "cloud VM node lifecycle scenarios",
+        "node network filtering",
+        "resource hog stress tests"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "node-scenarios",
+          "when": "the environment is cloud-backed or does not require BMC or IPMI control"
+        }
+      ],
+      "keywords": [
+        "bare metal node",
+        "IPMI",
+        "BMC",
+        "power cycle",
+        "hardware node reboot"
+      ]
+    },
+    "pod-network-chaos": {
+      "summary": "Blocks pod ingress and/or egress using pod-network-chaos flow-based network disruption, typically for pod-level traffic denial instead of narrow port filters.",
+      "good_for": [
+        "blocking pod traffic broadly at the pod networking layer",
+        "ingress or egress denial for selected pods",
+        "testing pod-level isolation where full traffic blocking is desired"
+      ],
+      "not_for": [
+        "single protocol or single-port filtering only",
+        "deleting pods",
+        "application-wide outages that are better described at the app level"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "pod-network-filter",
+          "when": "the goal is filtering only certain ports, interfaces, or directions with more precision"
+        },
+        {
+          "scenario": "application-outages",
+          "when": "the user is describing an application outage for one workload rather than pod networking mechanics"
+        }
+      ],
+      "keywords": [
+        "block pod traffic",
+        "pod ingress egress deny",
+        "pod isolation",
+        "OVS flow blocking",
+        "pod network outage"
+      ]
+    },
+    "pod-network-filter": {
+      "summary": "Uses targeted pod-level network filtering for selected ports, protocols, or interfaces rather than broader pod traffic blackholing.",
+      "good_for": [
+        "blocking DNS, SQL, or other specific egress flows from a pod",
+        "port- or interface-specific network rules",
+        "narrow protocol filtering without fully cutting all pod traffic"
+      ],
+      "not_for": [
+        "broad all-traffic pod isolation",
+        "application-wide outages across all app traffic",
+        "pod deletion or restart scenarios"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "pod-network-chaos",
+          "when": "the goal is broader pod ingress or egress denial instead of specific flow filtering"
+        },
+        {
+          "scenario": "dns-outage",
+          "when": "the intent is explicitly about DNS resolution failure because that scenario already captures the DNS-specific use case"
+        },
+        {
+          "scenario": "aurora-disruption",
+          "when": "the intent is specifically blocking MySQL or PostgreSQL traffic to Aurora"
+        }
+      ],
+      "keywords": [
+        "port filter",
+        "block SQL egress",
+        "filter DNS traffic",
+        "specific pod ports",
+        "interface filter"
+      ]
+    },
+    "pod-scenarios": {
+      "summary": "Disrupts pod objects themselves, such as deleting or targeting pods by label, excluded label, or pod name in a namespace.",
+      "good_for": [
+        "deleting pods or forcing pod object disruption",
+        "testing restart, reschedule, or replica recovery behavior",
+        "targeting pods by label, excluded label, or pod name"
+      ],
+      "not_for": [
+        "keeping pods alive while only blocking their network traffic",
+        "killing one container inside a pod without disrupting the whole pod",
+        "application-level network outages"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "container-scenarios",
+          "when": "the goal is disrupting one container process inside a pod"
+        },
+        {
+          "scenario": "application-outages",
+          "when": "the pods should stay running while the application becomes unreachable"
+        },
+        {
+          "scenario": "pod-network-chaos",
+          "when": "the goal is network isolation while keeping the pod object present"
+        }
+      ],
+      "keywords": [
+        "delete pod",
+        "pod disruption",
+        "restart pod",
+        "reschedule pod",
+        "pod object failure"
+      ]
+    },
+    "pvc-scenarios": {
+      "summary": "Focuses on PVC capacity pressure or storage exhaustion style experiments on claims rather than throttling IOPS or bandwidth.",
+      "good_for": [
+        "filling or exhausting a persistent volume claim",
+        "storage full conditions on a claim",
+        "capacity-related failures instead of throughput shaping"
+      ],
+      "not_for": [
+        "rate limiting reads or writes",
+        "IOPS throttling",
+        "general node disk stress unrelated to a PVC claim"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "storage-throttle",
+          "when": "the goal is limiting bandwidth or IOPS instead of making the claim run out of space"
+        }
+      ],
+      "keywords": [
+        "PVC full",
+        "storage exhaustion",
+        "fill claim",
+        "disk full on volume",
+        "capacity pressure"
+      ]
+    },
+    "storage-throttle": {
+      "summary": "Limits storage bandwidth or IOPS on PVC-backed volumes using cgroup I/O controls rather than filling the claim to capacity.",
+      "good_for": [
+        "throttling read or write throughput",
+        "reducing IOPS or bandwidth on storage",
+        "slow storage behavior without exhausting volume space"
+      ],
+      "not_for": [
+        "making a volume run out of free capacity",
+        "PVC fill or storage exhaustion tests",
+        "node-level CPU or memory stress"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "pvc-scenarios",
+          "when": "the goal is filling a claim or causing storage exhaustion instead of slowing it down"
+        }
+      ],
+      "keywords": [
+        "IOPS throttle",
+        "bandwidth limit",
+        "slow storage",
+        "read write throttle",
+        "throughput shaping"
+      ]
+    },
+    "syn-flood": {
+      "summary": "Generates a TCP SYN flood or connection surge against a target service or host to stress listener resiliency under attack-like traffic.",
+      "good_for": [
+        "SYN flood testing",
+        "connection surge or TCP flood behavior",
+        "stress against a target listener or service"
+      ],
+      "not_for": [
+        "DNS resolution outages",
+        "ordinary HTTP request load generation",
+        "application or pod deletion scenarios"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "dns-outage",
+          "when": "the user is talking about DNS lookups, hostname resolution, or service discovery failures"
+        },
+        {
+          "scenario": "http-load",
+          "when": "the goal is sustained web traffic instead of SYN flood traffic"
+        }
+      ],
+      "keywords": [
+        "SYN flood",
+        "TCP surge",
+        "connection flood",
+        "listener stress",
+        "volumetric TCP attack"
+      ]
+    }
+  }
+}
