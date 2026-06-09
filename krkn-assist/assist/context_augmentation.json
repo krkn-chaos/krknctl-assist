@@ -129,17 +129,51 @@
         "network degradation"
       ]
     },
-    "node-scenarios": {
-      "summary": "Runs cloud or platform node lifecycle disruptions such as reboot, stop, start, terminate, or kubelet operations against cluster nodes.",
+    "power-outages": {
+      "summary": "Shuts down the entire Kubernetes or OpenShift cluster for a duration, brings it back online, and verifies health after a full environment power-loss style outage.",
       "good_for": [
-        "node reboot, stop, start, terminate, or kubelet lifecycle workflows",
-        "cloud-backed or general node disruption scenarios",
+        "turning the whole cluster or environment off and then restarting it",
+        "full cluster shutdown and recovery validation",
+        "testing health checks after an entire environment power outage"
+      ],
+      "not_for": [
+        "single-node reboot, stop, start, or termination workflows",
+        "bare-metal BMC or IPMI control of individual nodes",
+        "application-only or pod-only traffic outages"
+      ],
+      "prefer_instead": [
+        {
+          "scenario": "node-scenarios",
+          "when": "the goal is lifecycle disruption for one or more selected nodes rather than the whole cluster"
+        },
+        {
+          "scenario": "node-scenarios-bm",
+          "when": "the goal is bare-metal power control through BMC or IPMI for specific nodes"
+        },
+        {
+          "scenario": "application-outages",
+          "when": "only one app should become unreachable while the cluster stays online"
+        }
+      ],
+      "keywords": [
+        "cluster shutdown",
+        "entire environment off",
+        "whole cluster powered off",
+        "power outage recovery",
+        "cluster restart health"
+      ]
+    },
+    "node-scenarios": {
+      "summary": "Runs cloud or platform node lifecycle disruptions such as reboot, stop, start, terminate, or kubelet operations against selected cluster nodes without requiring bare-metal BMC or IPMI control.",
+      "good_for": [
+        "cloud-provider worker stop, start, reboot, terminate, or kubelet lifecycle workflows",
+        "cloud-backed or general node disruption scenarios for selected nodes",
         "node availability and lifecycle resilience testing"
       ],
       "not_for": [
         "bare-metal IPMI or BMC power control specifics",
         "node CPU, memory, or I/O stress only",
-        "simple port-level firewall rules"
+        "turning the entire cluster or environment off"
       ],
       "prefer_instead": [
         {
@@ -149,13 +183,18 @@
         {
           "scenario": "node-network-filter",
           "when": "the goal is blocking traffic on ports rather than lifecycle disruption"
+        },
+        {
+          "scenario": "power-outages",
+          "when": "the goal is full cluster shutdown and recovery instead of selected node lifecycle disruption"
         }
       ],
       "keywords": [
+        "cloud provider node stop start",
         "node reboot",
         "node termination",
         "kubelet restart",
-        "node lifecycle",
+        "selected node lifecycle",
         "cloud node disruption"
       ]
     },
@@ -186,16 +225,16 @@
       ]
     },
     "pod-network-chaos": {
-      "summary": "Blocks pod ingress and/or egress using pod-network-chaos flow-based network disruption, typically for pod-level traffic denial instead of narrow port filters.",
+      "summary": "Blocks pod ingress, egress, or both using pod-network-chaos flow-based network disruption, typically for broad pod traffic denial while the pod and node remain intact.",
       "good_for": [
-        "blocking pod traffic broadly at the pod networking layer",
-        "ingress or egress denial for selected pods",
-        "testing pod-level isolation where full traffic blocking is desired"
+        "blocking all or broad pod traffic at the pod networking layer",
+        "ingress and egress denial for selected pods during a resilience drill",
+        "making chosen pods unreachable on the network while leaving the node intact"
       ],
       "not_for": [
-        "single protocol or single-port filtering only",
+        "single protocol or single-port firewall filtering only",
         "deleting pods",
-        "application-wide outages that are better described at the app level"
+        "application-wide outages described by service or app dependency behavior"
       ],
       "prefer_instead": [
         {
@@ -209,23 +248,25 @@
       ],
       "keywords": [
         "block pod traffic",
+        "block all pod traffic",
         "pod ingress egress deny",
+        "chosen pods unreachable",
         "pod isolation",
-        "OVS flow blocking",
         "pod network outage"
       ]
     },
     "pod-network-filter": {
-      "summary": "Uses targeted pod-level network filtering for selected ports, protocols, or interfaces rather than broader pod traffic blackholing.",
+      "summary": "Uses targeted pod-level firewall filtering for selected ports, protocols, directions, or interfaces rather than broad pod traffic blackholing.",
       "good_for": [
         "blocking DNS, SQL, or other specific egress flows from a pod",
-        "port- or interface-specific network rules",
+        "cutting pod ingress or egress on a chosen port",
+        "port-, protocol-, direction-, or interface-specific network rules",
         "narrow protocol filtering without fully cutting all pod traffic"
       ],
       "not_for": [
         "broad all-traffic pod isolation",
         "application-wide outages across all app traffic",
-        "pod deletion or restart scenarios"
+        "latency, bandwidth shaping, or packet impairment scenarios"
       ],
       "prefer_instead": [
         {
@@ -242,11 +283,12 @@
         }
       ],
       "keywords": [
+        "pod firewall",
         "port filter",
+        "chosen port",
         "block SQL egress",
         "filter DNS traffic",
-        "specific pod ports",
-        "interface filter"
+        "specific pod ports"
       ]
     },
     "pod-scenarios": {
@@ -284,29 +326,34 @@
       ]
     },
     "pvc-scenarios": {
-      "summary": "Focuses on PVC capacity pressure or storage exhaustion style experiments on claims rather than throttling IOPS or bandwidth.",
+      "summary": "Focuses on PVC capacity pressure by writing data to a bound claim until free space is low or exhausted, rather than throttling IOPS, bandwidth, or stressing node disks.",
       "good_for": [
-        "filling or exhausting a persistent volume claim",
-        "storage full conditions on a claim",
+        "filling or exhausting a persistent volume claim with junk data",
+        "free-space pressure or storage full conditions on a bound claim",
         "capacity-related failures instead of throughput shaping"
       ],
       "not_for": [
         "rate limiting reads or writes",
         "IOPS throttling",
-        "general node disk stress unrelated to a PVC claim"
+        "node-level disk bandwidth or I/O stress unrelated to a PVC claim"
       ],
       "prefer_instead": [
         {
           "scenario": "storage-throttle",
           "when": "the goal is limiting bandwidth or IOPS instead of making the claim run out of space"
+        },
+        {
+          "scenario": "node-io-hog",
+          "when": "the goal is consuming node disk bandwidth or stressing node I/O rather than filling a claim"
         }
       ],
       "keywords": [
         "PVC full",
         "storage exhaustion",
+        "free space pressure",
+        "write junk data",
         "fill claim",
-        "disk full on volume",
-        "capacity pressure"
+        "disk full on volume"
       ]
     },
     "storage-throttle": {
