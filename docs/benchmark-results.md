@@ -12,6 +12,3 @@ The current `krknctl-assist` benchmark run completed **290 queries** with **0 er
 - **p95 latency:** 1137 ms
 - **p99 latency:** 1266 ms
 
-## Current State
-
-The benchmark shows strong retrieval quality overall, with most scenario categories returning the expected result at rank 1. The main remaining misses are concentrated in a few overlapping scenario groups, especially pod and network-related scenarios.
