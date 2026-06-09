@@ -18,6 +18,7 @@ MODE="verify"
 FORCE_BUILD=0
 SKIP_BREW=0
 SKIP_KRKNCTL=0
+VERBOSE="${KRKNCTL_ASSIST_VERBOSE:-0}"
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 DOCKERFILE_PATH="${KRKNCTL_ASSIST_DOCKERFILE:-}"
 IMAGE_BUILD_BACKEND=""
@@ -57,6 +58,7 @@ Options:
   --force-build             Rebuild image even if it already exists
   --skip-brew               Do not install Homebrew packages
   --skip-krknctl            Do not clone/build/run krknctl
+  --verbose                 Show detailed command output in the terminal
   Env: KRKNCTL_ASSIST_HEALTH_TIMEOUT_SECONDS
                            Override smoke-test readiness wait in seconds
   -h, --help                Show this help
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     --force-build) FORCE_BUILD=1; shift ;;
     --skip-brew) SKIP_BREW=1; shift ;;
     --skip-krknctl) SKIP_KRKNCTL=1; shift ;;
+    --verbose) VERBOSE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -84,9 +87,13 @@ done
 
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
+STATUS_ACTIVE=0
 
 log() {
-  printf '%s\n' "$*" | tee -a "$LOG_FILE"
+  printf '%s\n' "$*" >>"$LOG_FILE"
+  if [[ "$STATUS_ACTIVE" != "1" || "$VERBOSE" == "1" ]]; then
+    printf '%s\n' "$*"
+  fi
 }
 
 warn() {
@@ -102,8 +109,13 @@ fail() {
 run() {
   log "+ $*"
   set +e
-  "$@" 2>&1 | tee -a "$LOG_FILE"
-  local status=${PIPESTATUS[0]}
+  if [[ "$VERBOSE" == "1" ]]; then
+    "$@" 2>&1 | tee -a "$LOG_FILE"
+    local status=${PIPESTATUS[0]}
+  else
+    "$@" >>"$LOG_FILE" 2>&1
+    local status=$?
+  fi
   set -e
   if [[ "$status" -ne 0 ]]; then
     fail "Command failed: $*"
@@ -113,8 +125,46 @@ run() {
 run_quiet() {
   log "+ $*"
   if ! "$@" >>"$LOG_FILE" 2>&1; then
-    tail -n 80 "$LOG_FILE"
+    if [[ "$VERBOSE" == "1" ]]; then
+      tail -n 80 "$LOG_FILE"
+    fi
     fail "Command failed: $*"
+  fi
+}
+
+status_note() {
+  printf '%s\n' "$*" | tee -a "$LOG_FILE"
+}
+
+status_run() {
+  local label="$1"
+  shift
+  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local i=0
+  local pid
+  local status
+
+  status_note "▶ $label"
+  STATUS_ACTIVE=1 "$@" &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r%s %s' "${frames[$((i % ${#frames[@]}))]}" "$label"
+    i=$((i + 1))
+    sleep 0.12
+  done
+
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+  printf '\r'
+  if [[ "$status" -eq 0 ]]; then
+    status_note "✅ $label complete"
+  else
+    status_note "❌ $label failed"
+    status_note "📄 Details: $LOG_FILE"
+    exit "$status"
   fi
 }
 
@@ -584,7 +634,9 @@ warm_index_assets() {
     -w /app \
     "$IMAGE" \
     python3 retriever.py index >>"$LOG_FILE" 2>&1; then
-    tail -n 120 "$LOG_FILE"
+    if [[ "$VERBOSE" == "1" ]]; then
+      tail -n 120 "$LOG_FILE"
+    fi
     fail "FAISS warm-up failed"
   fi
   log "✅ FAISS assets precomputed"
@@ -681,7 +733,11 @@ smoke_test_image() {
   log "Started smoke-test container: $container_id"
 
   if ! wait_for_health "http://127.0.0.1:8080"; then
-    podman logs "$SMOKE_CONTAINER" 2>&1 | tail -n 120 | tee -a "$LOG_FILE" || true
+    if [[ "$VERBOSE" == "1" ]]; then
+      podman logs "$SMOKE_CONTAINER" 2>&1 | tail -n 120 | tee -a "$LOG_FILE" || true
+    else
+      podman logs "$SMOKE_CONTAINER" >>"$LOG_FILE" 2>&1 || true
+    fi
     podman rm -f "$SMOKE_CONTAINER" >>"$LOG_FILE" 2>&1 || true
     SMOKE_CONTAINER=""
     fail "Assist image did not become healthy within ${HEALTH_TIMEOUT_SECONDS}s"
@@ -704,7 +760,11 @@ PY
       break
     fi
     warn "Compat API smoke query failed on attempt $query_attempt"
-    podman logs "$SMOKE_CONTAINER" 2>&1 | tail -n 120 | tee -a "$LOG_FILE" || true
+    if [[ "$VERBOSE" == "1" ]]; then
+      podman logs "$SMOKE_CONTAINER" 2>&1 | tail -n 120 | tee -a "$LOG_FILE" || true
+    else
+      podman logs "$SMOKE_CONTAINER" >>"$LOG_FILE" 2>&1 || true
+    fi
     sleep 5
   done
 
@@ -712,7 +772,7 @@ PY
 
   printf '%s\n' "$response" >>"$LOG_FILE"
   set +e
-  python3 - "$response" "$EXPECTED_SCENARIO" <<'PY' | tee -a "$LOG_FILE"
+  python3 - "$response" "$EXPECTED_SCENARIO" <<'PY' >>"$LOG_FILE"
 import json
 import sys
 
@@ -725,7 +785,7 @@ if expected and scenario != expected and expected not in content:
     print(f"Expected scenario {expected!r}, got scenario_name={scenario!r}, content={content!r}")
     raise SystemExit(1)
 PY
-  local status=${PIPESTATUS[0]}
+  local status=$?
   set -e
   [[ "$status" -eq 0 ]] || fail "Smoke query did not return expected scenario"
 
@@ -901,37 +961,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "🚀 krknctl assist setup started"
-log "Repo: $ROOT_DIR"
-log "Image: $IMAGE"
-log "Mode: $MODE"
-log "Log: $LOG_FILE"
+status_note "🚀 krknctl assist setup started"
+status_note "📦 Image: $IMAGE"
+status_note "🧭 Mode: $MODE"
+status_note "📄 Detailed log: $LOG_FILE"
 
-ensure_brew_packages
-ensure_basic_tools
-ensure_podman_ready
+status_run "Checking host prerequisites" ensure_brew_packages
+status_run "Checking required tools" ensure_basic_tools
+status_run "Preparing container runtime" ensure_podman_ready
 configure_image_build
 log "Dockerfile: $DOCKERFILE_PATH"
 log "Container platform: $CONTAINER_PLATFORM"
 log "Image build backend: $IMAGE_BUILD_BACKEND"
 
 if [[ "$MODE" == "cleanup" ]]; then
-  stop_assist_containers_on_8080
-  log "✅ krknctl assist cleanup finished"
-  log "Log: $LOG_FILE"
+  status_run "Cleaning up assist containers" stop_assist_containers_on_8080
+  status_note "✅ krknctl assist cleanup finished"
+  status_note "📄 Detailed log: $LOG_FILE"
   exit 0
 fi
 
-build_assist_image
-smoke_test_image
-verify_image_provenance
-ensure_krknctl_checkout
+status_run "Building assist image and warming index" build_assist_image
+status_run "Running API smoke test" smoke_test_image
+status_run "Verifying image provenance" verify_image_provenance
+status_run "Preparing krknctl checkout" ensure_krknctl_checkout
 
 case "$MODE" in
   setup-only) ;;
-  verify) verify_krknctl_noninteractive ;;
+  verify) status_run "Running krknctl assist verification" verify_krknctl_noninteractive ;;
   launch) launch_krknctl ;;
 esac
 
-log "🎉 krknctl assist setup finished successfully"
-log "Log: $LOG_FILE"
+status_note "🎉 krknctl assist setup finished successfully"
+status_note "📄 Detailed log: $LOG_FILE"
