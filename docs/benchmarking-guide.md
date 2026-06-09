@@ -16,6 +16,24 @@
 - Reranking is important because it boosts precision (our core metric), but it is very expensive in terms of latency if not set properly
 - The quality of reranking will be of no use if the retriever does not provide high recall
 
+### Current Baseline
+
+These are the latest benchmark values from `benchmark-results/20260609T143153Z/benchmark.json`:
+
+| Metric | Latest value |
+| --- | --- |
+| `precision@1` | `0.910345` |
+| `recall@k` | `0.965517` |
+| `mrr` | `0.937931` |
+| `latency_ms.avg` | `1045.521 ms` |
+| `latency_ms.p50` | `1021.874 ms` |
+| `latency_ms.p95` | `1136.891 ms` |
+| `latency_ms.p99` | `1265.980 ms` |
+| `stage_timing_ms.retrieval.avg` | `155.507 ms` |
+| `stage_timing_ms.rerank.avg` | `867.752 ms` |
+| `stage_timing_ms.total.avg` | `1029.421 ms` |
+| `failures` | `26 / 290` |
+
 
 ### Drift Control Limits
 
@@ -23,11 +41,11 @@ Treat these values as the current control limits for this benchmark run. If any 
 
 | Metric | Control limit |
 | --- | --- |
-| `precision@1` | Keep at or above `0.74` |
-| `recall@k` | Keep at or above `0.92` |
-| `mrr` | Keep at or above `0.80` |
-| `latency_ms.p95` | Keep at or below `2000 ms` |
-| `latency_ms.avg` | Keep at or below `1500 ms` |
+| `precision@1` | Keep at or above `0.82` |
+| `recall@k` | Keep at or above `0.90` |
+| `mrr` | Keep at or above `0.90` |
+| `latency_ms.p95` | Keep at or below `1200 ms` |
+| `latency_ms.avg` | Keep at or below `1400 ms` |
 
 ### How To Read Drift
 
