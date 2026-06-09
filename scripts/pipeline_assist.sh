@@ -49,6 +49,7 @@ QUERY_MS=0
 BUILD_MS=0
 INDEX_MS=0
 TOTAL_MS=0
+KEEP_PIPELINE_LOG=0
 POSITIONAL_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -246,6 +247,92 @@ vlog() {
   fi
 }
 
+status_note() {
+  if [[ "$VERBOSE" != "1" ]]; then
+    printf '%s\n' "$*"
+  fi
+}
+
+status_wait_for_pid() {
+  local label="$1"
+  local pid="$2"
+  local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+  local i=0
+  local status
+
+  if [[ "$VERBOSE" == "1" ]]; then
+    set +e
+    wait "$pid"
+    status=$?
+    set -e
+    return "$status"
+  fi
+
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r%s %s' "${frames[$((i % ${#frames[@]}))]}" "$label"
+    i=$((i + 1))
+    sleep 0.12
+  done
+
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+  return "$status"
+}
+
+status_run_quiet() {
+  local label="$1"
+  shift
+  local pid
+  local status
+
+  if [[ "$VERBOSE" == "1" ]]; then
+    "$@"
+    return
+  fi
+
+  "$@" >>"$PIPELINE_LOG" 2>&1 &
+  pid=$!
+  status_wait_for_pid "$label" "$pid"
+  status=$?
+  printf '\r'
+  if [[ "$status" -eq 0 ]]; then
+    status_note "✅ $label"
+  else
+    KEEP_PIPELINE_LOG=1
+    status_note "❌ $label failed"
+    status_note "📄 Details: $PIPELINE_LOG"
+    exit "$status"
+  fi
+}
+
+status_try_quiet() {
+  local label="$1"
+  shift
+  local pid
+  local status
+
+  if [[ "$VERBOSE" == "1" ]]; then
+    "$@"
+    return
+  fi
+
+  "$@" >>"$PIPELINE_LOG" 2>&1 &
+  pid=$!
+  status_wait_for_pid "$label" "$pid"
+  status=$?
+  printf '\r'
+  if [[ "$status" -eq 0 ]]; then
+    status_note "✅ $label"
+  else
+    KEEP_PIPELINE_LOG=1
+    status_note "❌ $label failed"
+    status_note "📄 Details: $PIPELINE_LOG"
+  fi
+  return "$status"
+}
+
 stop_stale_krknctl_processes() {
   command -v pgrep >/dev/null 2>&1 || return 0
 
@@ -296,7 +383,9 @@ COMPAT_PORT="${RETRIEVER_COMPAT_PORT:-8080}"
 API_BASE_URL="http://127.0.0.1:${DEBUG_PORT}"
 COMPAT_BASE_URL="http://127.0.0.1:${COMPAT_PORT}"
 cleanup_logs() {
-  rm -f "$PIPELINE_LOG"
+  if [[ "$KEEP_PIPELINE_LOG" != "1" ]]; then
+    rm -f "$PIPELINE_LOG"
+  fi
   if [[ -n "$QUERY_LOG" ]]; then
     rm -f "$QUERY_LOG"
   fi
@@ -336,9 +425,9 @@ run_cmd() {
   fi
 
   if ! "$@" >>"$PIPELINE_LOG" 2>&1; then
-    echo "Error: retrieval pipeline failed."
-    tail -n 40 "$PIPELINE_LOG"
-    rm -f "$PIPELINE_LOG"
+    KEEP_PIPELINE_LOG=1
+    echo "❌ Retrieval pipeline failed."
+    echo "📄 Details: $PIPELINE_LOG"
     exit 1
   fi
 }
@@ -709,11 +798,11 @@ PY
 
 run_query_once() {
   if ! run_query_via_api "$QUERY"; then
-    echo "Error: retrieval query failed."
+    echo "❌ Retrieval query failed."
     if [[ "$VERBOSE" == "1" ]]; then
       cat "$QUERY_LOG"
     else
-      tail -n 40 "$QUERY_LOG"
+      echo "📄 Query log: $QUERY_LOG"
     fi
     exit 1
   fi
@@ -866,7 +955,7 @@ if [[ "$BACKEND" == "vulkan" ]]; then
   fi
 
   if [[ ! -f "$LLAMA_EMBED_MODEL_PATH" && "$AUTO_DOWNLOAD_MODEL" == "1" ]]; then
-    download_gguf_model "$LLAMA_EMBED_MODEL_PATH"
+    status_run_quiet "📥 Downloading embedding model" download_gguf_model "$LLAMA_EMBED_MODEL_PATH"
   fi
 
   if [[ ! -f "$LLAMA_EMBED_MODEL_PATH" ]]; then
@@ -927,26 +1016,32 @@ if [[ "$VERBOSE" == "1" ]]; then
   echo ""
 fi
 
+if [[ "$VERBOSE" != "1" ]]; then
+  status_note "🚀 krknctl-assist is getting ready"
+  status_note "🧭 Backend: $BACKEND  |  Engine: $ENGINE"
+fi
+
 TOTAL_START_MS="$(now_ms)"
 
 # ── [1/3] Build image ──
-ensure_podman_machine
+status_run_quiet "🛠️  Preparing container runtime" ensure_podman_machine
 
 vlog "[1/3] Building retriever container image"
 STEP_START_MS="$(now_ms)"
 if [[ "$FORCE_BUILD" == "1" ]]; then
   vlog "      RETRIEVER_FORCE_BUILD=1 — rebuilding image"
-  run_cmd build_image
+  status_run_quiet "🏗️  Building retrieval image" build_image
 elif "$ENGINE" image exists "$IMAGE"; then
   if image_is_compatible; then
     vlog "      Image $IMAGE already present and compatible, skipping build"
+    status_note "✅ Retrieval image already prepared"
   else
     vlog "      Existing image incompatible, rebuilding..."
-    run_cmd build_image
+    status_run_quiet "🏗️  Rebuilding retrieval image" build_image
   fi
 else
   vlog "      Building image..."
-  run_cmd build_image
+  status_run_quiet "🏗️  Building retrieval image" build_image
 fi
 STEP_END_MS="$(now_ms)"
 BUILD_MS="$((STEP_END_MS - STEP_START_MS))"
@@ -977,7 +1072,7 @@ else
 fi
 
 if [[ "$should_reindex" == "1" ]]; then
-  run_cmd run_retriever_python \
+  status_run_quiet "🧠 Building search index" run_retriever_python \
     -v "$ROOT_DIR/krkn-assist:/app$MOUNT_LABEL_SUFFIX" \
     -v "$HF_CACHE_DIR:/root/.cache/huggingface$MOUNT_LABEL_SUFFIX" \
     -v "$TORCH_CACHE_DIR:/root/.cache/torch$MOUNT_LABEL_SUFFIX" \
@@ -1016,6 +1111,8 @@ if [[ "$should_reindex" == "1" ]]; then
     -w /app \
     "$IMAGE" \
     retriever.py "${DEVICE_ARGS[@]}" index
+else
+  status_note "✅ Search index already ready"
 fi
 STEP_END_MS="$(now_ms)"
 INDEX_MS="$((STEP_END_MS - STEP_START_MS))"
@@ -1030,21 +1127,9 @@ QUERY_LOG="$(mktemp)"
 cleanup_assist_containers
 vlog "      Starting debug API service on $API_BASE_URL"
 vlog "      Starting compat API service on $COMPAT_BASE_URL"
-if ! start_api_standby >>"$PIPELINE_LOG" 2>&1; then
-  echo "Error: failed to start standby API container."
-  tail -n 40 "$PIPELINE_LOG"
-  exit 1
-fi
-if ! wait_for_api_ready; then
-  echo "Error: standby API did not become ready."
-  "$ENGINE" ps -a --filter "name=$API_CONTAINER_NAME" || true
-  if [[ -n "$API_CONTAINER_ID" ]]; then
-    "$ENGINE" logs "$API_CONTAINER_ID" | tail -n 60 || true
-  else
-    "$ENGINE" logs "$API_CONTAINER_NAME" | tail -n 60 || true
-  fi
-  exit 1
-fi
+status_run_quiet "🔌 Starting assist API" start_api_standby
+status_run_quiet "⏳ Waiting for assist API readiness" wait_for_api_ready
+status_note "✅ Assist API is ready"
 
 if [[ "$INTERACTIVE" == "1" ]]; then
   echo ""
@@ -1066,10 +1151,16 @@ if [[ "$INTERACTIVE" == "1" ]]; then
       continue
     fi
     STEP_START_MS="$(now_ms)"
-    if ! run_query_via_api "$QUERY"; then
-      echo "Error: retrieval query failed."
-      tail -n 40 "$QUERY_LOG"
-      continue
+    if [[ "$VERBOSE" == "1" ]]; then
+      if ! run_query_via_api "$QUERY"; then
+        echo "Error: retrieval query failed."
+        tail -n 40 "$QUERY_LOG"
+        continue
+      fi
+    else
+      if ! status_try_quiet "🔎 Searching and reranking" run_query_via_api "$QUERY"; then
+        continue
+      fi
     fi
     STEP_END_MS="$(now_ms)"
     QUERY_MS="$((STEP_END_MS - STEP_START_MS))"
@@ -1077,7 +1168,11 @@ if [[ "$INTERACTIVE" == "1" ]]; then
     render_query_output "$QUERY_MS"
   done
 else
-  run_query_once
+  if [[ "$VERBOSE" == "1" ]]; then
+    run_query_once
+  else
+    status_run_quiet "🔎 Searching and reranking" run_query_once
+  fi
   STEP_END_MS="$(now_ms)"
   QUERY_MS="$((STEP_END_MS - STEP_START_MS))"
   vlog "      Step time: ${QUERY_MS}ms"
@@ -1098,4 +1193,6 @@ if [[ "$VERBOSE" == "1" ]]; then
     echo "[3/3] Running retrieval and reranking      (skipped)"
   fi
   echo "Total elapsed: ${TOTAL_MS}ms"
+else
+  status_note "🎉 Assist query flow complete"
 fi
