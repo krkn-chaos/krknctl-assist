@@ -46,18 +46,22 @@ ARG GITHUB_REPO=krkn-chaos/krknctl-assist
 
 RUN pip install --upgrade pip setuptools wheel && \
     BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
+    echo "Searching for pre-built wheel at ${BASE_URL}..." && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
-      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl" && \
-      if curl -fsSL --head "$WHEEL_URL" >/dev/null 2>&1; then \
-        echo "Installing pre-built wheel from GitHub releases (${PYVER})..." && \
+      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl"; \
+      echo "Checking: ${WHEEL_URL}"; \
+      if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        echo "Found pre-built wheel (${PYVER}), downloading and installing..."; \
         pip install "$WHEEL_URL" && \
         WHEEL_FOUND=1 && \
         break; \
+      else \
+        echo "Not found for ${PYVER}"; \
       fi; \
     done && \
     if [ "$WHEEL_FOUND" = "0" ]; then \
-      echo "Pre-built wheel not found, building from source (this will take ~1.5 hours)..." && \
+      echo "No pre-built wheel found, building from source (this will take ~1.5 hours)..." && \
       export PATH="/usr/lib64/ccache:$PATH" && \
       CMAKE_ARGS="\
         -DGGML_VULKAN=on \
