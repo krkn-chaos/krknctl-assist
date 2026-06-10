@@ -57,3 +57,37 @@ Suggested command: krknctl run pod-network-filter
 | `krknctl-assist` | Start the interactive assistant |
 | `krknctl-assist --force-build` | Force a rebuild |
 | `krknctl-assist --cleanup` | Clean up local containers |
+
+## For Maintainers
+
+### Building Docker Images
+
+Docker images are automatically built and pushed to Quay.io on every tag push via GitHub Actions.
+
+#### Pre-compiled Wheels for ARM64
+
+To speed up ARM64 builds (which otherwise take ~1.5 hours due to QEMU emulation), we use pre-compiled llama-cpp-python wheels:
+
+**Requirements:**
+- Apple Silicon Mac (M1/M2/M3) OR ARM64 Linux machine
+- `podman` or `docker` installed
+- `gh` CLI installed and authenticated
+
+**Process:**
+```bash
+# 1. Build wheel locally (10-15 min on native ARM64)
+./scripts/build_wheel_local.sh 0.3.19
+
+# 2. Upload to GitHub Releases
+./scripts/upload_wheel.sh 0.3.19
+```
+
+See [WHEELS_QUICKSTART.md](WHEELS_QUICKSTART.md) for details.
+
+#### Updating llama-cpp-python Version
+
+1. Update `ARG LLAMA_CPP_VERSION=` in both Dockerfiles
+2. Build and upload new ARM64 wheel (see above)
+3. Push a new tag to trigger CI builds
+
+The Dockerfiles will automatically use the pre-compiled wheel if available, otherwise fall back to building from source.

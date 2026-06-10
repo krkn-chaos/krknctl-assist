@@ -38,19 +38,36 @@ RUN dnf -y install --setopt=install_weak_deps=False \
 
 # ── [3/4] llama-cpp-python with Vulkan backend ───────────────────────────────
 #
+# Downloads pre-built wheel from GitHub releases if available, otherwise builds from source.
 # GGML_VULKAN_COOPMAT* disabled: cooperative matrix extensions require
 # Vulkan 1.3 features not guaranteed on Mesa Venus (virtio-gpu).
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    pip install --upgrade pip setuptools wheel && \
-    export PATH="/usr/lib64/ccache:$PATH" && \
-    CMAKE_ARGS="\
-      -DGGML_VULKAN=on \
-      -DGGML_VULKAN_COOPMAT=OFF \
-      -DGGML_VULKAN_COOPMAT2=OFF \
-      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    " FORCE_CMAKE=1 \
-      pip install --no-binary=llama-cpp-python "llama-cpp-python==0.3.19"
+ARG LLAMA_CPP_VERSION=0.3.19
+ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+
+RUN pip install --upgrade pip setuptools wheel && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
+    WHEEL_FOUND=0 && \
+    for PYVER in cp313 cp312 cp311 cp310; do \
+      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl" && \
+      if curl -fsSL --head "$WHEEL_URL" >/dev/null 2>&1; then \
+        echo "Installing pre-built wheel from GitHub releases (${PYVER})..." && \
+        pip install "$WHEEL_URL" && \
+        WHEEL_FOUND=1 && \
+        break; \
+      fi; \
+    done && \
+    if [ "$WHEEL_FOUND" = "0" ]; then \
+      echo "Pre-built wheel not found, building from source (this will take ~1.5 hours)..." && \
+      export PATH="/usr/lib64/ccache:$PATH" && \
+      CMAKE_ARGS="\
+        -DGGML_VULKAN=on \
+        -DGGML_VULKAN_COOPMAT=OFF \
+        -DGGML_VULKAN_COOPMAT2=OFF \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+      " FORCE_CMAKE=1 \
+        pip install --no-binary=llama-cpp-python "llama-cpp-python==${LLAMA_CPP_VERSION}"; \
+    fi
 
 # ── [4/4] Python runtime dependencies ────────────────────────────────────────
 #
