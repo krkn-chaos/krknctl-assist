@@ -46,11 +46,19 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
       requests
 
 ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF
+ARG GGUF_FILE=Qwen3-Embedding-0.6B-f16.gguf
+
 ENV RETRIEVER_BACKEND=vulkan \
     LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
     LLAMA_GPU_LAYERS=-1
 
-COPY models/ /models/
+# Download GGUF model from HuggingFace
+RUN mkdir -p /models && \
+    curl -L --fail --retry 3 --continue-at - \
+    -o /models/${GGUF_FILE} \
+    "https://huggingface.co/${GGUF_REPO}/resolve/main/${GGUF_FILE}"
+
 COPY krkn-assist/ /app/
 
 EXPOSE 8080 18080
