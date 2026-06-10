@@ -8,7 +8,7 @@ on:
 jobs:
   build-apple-silicon:
     name: Build Apple Silicon Image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,16 +36,15 @@ jobs:
           tags: quay.io/krkn-chaos/krknctl-assist:apple-silicon
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-  build-intel:
-    name: Build Intel Multi-arch Image
+  build-intel-amd64:
+    name: Build Intel AMD64 Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -57,13 +56,63 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build and push Intel multi-arch image
+      - name: Build and push Intel AMD64 image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./krkn-assist/Dockerfile.linux
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
-          tags: quay.io/krkn-chaos/krknctl-assist:intel
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: quay.io/krkn-chaos/krknctl-assist:intel-amd64
+          cache-from: type=gha,scope=intel-amd64
+          cache-to: type=gha,mode=max,scope=intel-amd64
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  build-intel-arm64:
+    name: Build Intel ARM64 Image
+    runs-on: ubuntu-24.04-arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and push Intel ARM64 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./krkn-assist/Dockerfile.linux
+          platforms: linux/arm64
+          push: true
+          tags: quay.io/krkn-chaos/krknctl-assist:intel-arm64
+          cache-from: type=gha,scope=intel-arm64
+          cache-to: type=gha,mode=max,scope=intel-arm64
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  create-intel-manifest:
+    name: Create Intel Multi-arch Manifest
+    runs-on: ubuntu-latest
+    needs: [build-intel-amd64, build-intel-arm64]
+    steps:
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          docker buildx imagetools create -t quay.io/krkn-chaos/krknctl-assist:intel \
+            quay.io/krkn-chaos/krknctl-assist:intel-amd64 \
+            quay.io/krkn-chaos/krknctl-assist:intel-arm64

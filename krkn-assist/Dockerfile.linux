@@ -21,14 +21,19 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     vulkan-tools \
     vulkan-loader \
     glslc \
-    spirv-headers-devel && \
+    spirv-headers-devel \
+    ccache && \
     dnf clean all
 
-RUN pip install --upgrade pip setuptools wheel && \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    pip install --upgrade pip setuptools wheel && \
+    export PATH="/usr/lib64/ccache:$PATH" && \
     CMAKE_ARGS="\
       -DGGML_VULKAN=on \
       -DGGML_VULKAN_COOPMAT=OFF \
       -DGGML_VULKAN_COOPMAT2=OFF \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     " FORCE_CMAKE=1 \
       pip install --no-binary=llama-cpp-python "llama-cpp-python==0.3.19"
 

@@ -32,18 +32,23 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     git \
     python3 python3-pip python3-devel \
     gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
-    spirv-headers-devel && \
+    spirv-headers-devel \
+    ccache && \
     dnf clean all
 
 # ── [3/4] llama-cpp-python with Vulkan backend ───────────────────────────────
 #
 # GGML_VULKAN_COOPMAT* disabled: cooperative matrix extensions require
 # Vulkan 1.3 features not guaranteed on Mesa Venus (virtio-gpu).
-RUN pip install --upgrade pip setuptools wheel && \
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    pip install --upgrade pip setuptools wheel && \
+    export PATH="/usr/lib64/ccache:$PATH" && \
     CMAKE_ARGS="\
       -DGGML_VULKAN=on \
       -DGGML_VULKAN_COOPMAT=OFF \
       -DGGML_VULKAN_COOPMAT2=OFF \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     " FORCE_CMAKE=1 \
       pip install --no-binary=llama-cpp-python "llama-cpp-python==0.3.19"
 
