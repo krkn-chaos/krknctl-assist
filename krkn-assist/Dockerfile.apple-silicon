@@ -91,12 +91,17 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu \
 RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
 
-# ── [5/6] Copy application code for index pre-build ──────────────────────────
+# ── [5/6] Copy application code ──────────────────────────────────────────────
 COPY krkn-assist/ /app/
 
-# ── [6/6] Pre-build FAISS index at build time ────────────────────────────────
+# ── [6/6] Pre-build FAISS index if not already present ───────────────────────
 WORKDIR /app
-RUN python3 prebuild_index.py
+RUN if [ ! -f faiss-index/krkn-scenarios.index ]; then \
+      echo "Pre-building FAISS index..."; \
+      python3 prebuild_index.py; \
+    else \
+      echo "Using existing FAISS index from GitHub Actions artifact"; \
+    fi
 
 # ── [5/8] Download GGUF model ────────────────────────────────────────────────
 ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF

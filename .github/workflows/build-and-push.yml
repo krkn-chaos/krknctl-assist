@@ -18,12 +18,59 @@ on:
       - '*'
 
 jobs:
+  prebuild-index:
+    name: Pre-build FAISS Index (x86_64 native)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          cd krkn-assist
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch torchvision torchaudio
+          pip install \
+            transformers \
+            huggingface_hub \
+            faiss-cpu \
+            onnx \
+            onnxruntime \
+            onnxscript \
+            optimum[onnxruntime] \
+            sentence-transformers \
+            requests
+
+      - name: Generate FAISS index
+        run: |
+          cd krkn-assist
+          python3 prebuild_index.py
+
+      - name: Upload index artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faiss-index
+          path: krkn-assist/faiss-index/
+          retention-days: 1
+
   build-apple-silicon:
+    needs: prebuild-index
     name: Build Apple Silicon Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download pre-built index
+        uses: actions/download-artifact@v4
+        with:
+          name: faiss-index
+          path: krkn-assist/faiss-index/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -52,11 +99,18 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
 
   build-intel:
+    needs: prebuild-index
     name: Build Intel Multi-arch Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Download pre-built index
+        uses: actions/download-artifact@v4
+        with:
+          name: faiss-index
+          path: krkn-assist/faiss-index/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
