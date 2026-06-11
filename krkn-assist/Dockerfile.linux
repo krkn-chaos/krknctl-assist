@@ -116,7 +116,8 @@ USER 0
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/app/.cache/huggingface
 
 ARG GGML_BACKEND=vulkan
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
@@ -142,9 +143,10 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
 
-# ── Copy GGUF model and pre-built index from builder ─────────────────────────
+# ── Copy GGUF model, pre-built index, and ONNX cache from builder ───────────
 COPY --from=builder /models /models
 COPY --from=builder /app/faiss-index /app/faiss-index
+COPY --from=builder /app/.cache/huggingface /app/.cache/huggingface
 
 # ── Install Python dependencies in runtime (ensures correct linkage) ─────────
 ARG LLAMA_CPP_VERSION=0.3.19
@@ -172,10 +174,9 @@ RUN pip install --upgrade pip setuptools wheel && \
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies (torch CUDA for ONNX export at first startup)
-# FAISS index is pre-built in builder stage, ONNX reranker exports on first startup
-RUN pip install torch torchvision torchaudio && \
-    pip install \
+# Install remaining Python dependencies (ONNX runtime only, no torch/sentence-transformers)
+# FAISS index and ONNX reranker are pre-built via GitHub Actions artifacts
+RUN pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -183,8 +184,6 @@ RUN pip install torch torchvision torchaudio && \
       faiss-cpu \
       onnx \
       onnxruntime \
-      onnxscript \
-      "optimum[onnxruntime]>=1.27,<2" \
       requests && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
