@@ -19,7 +19,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
-    os.chdir("/app")
+    # Work from script directory (supports both Docker and GitHub Actions)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
 
     from assist.ranking import create_ranker
     from assist.settings import (
