@@ -75,5 +75,32 @@ def main():
     logger.info("  Documents indexed: %d", doc_count)
     logger.info("  Index entries: %d", entry_count)
 
+    logger.info("")
+    logger.info("Pre-building ONNX reranker model...")
+
+    from assist.settings import CROSS_ENCODER_MODEL
+
+    logger.info("  Model: %s", CROSS_ENCODER_MODEL)
+
+    try:
+        from assist.ranking import OnnxCrossEncoder
+        cross_encoder = OnnxCrossEncoder(CROSS_ENCODER_MODEL)
+
+        onnx_dir = cross_encoder._onnx_model_dir()
+        onnx_file = onnx_dir / "model.onnx"
+        runtime_file = onnx_dir / "model-int8.onnx"
+
+        if onnx_file.exists():
+            onnx_size_mb = onnx_file.stat().st_size / (1024 * 1024)
+            logger.info("  ONNX model: %s (%.2f MB)", onnx_file, onnx_size_mb)
+
+        if runtime_file.exists():
+            runtime_size_mb = runtime_file.stat().st_size / (1024 * 1024)
+            logger.info("  Quantized model: %s (%.2f MB)", runtime_file, runtime_size_mb)
+
+        logger.info("ONNX reranker pre-build completed")
+    except Exception as exc:
+        logger.warning("Failed to pre-build ONNX reranker (non-fatal): %s", exc)
+
 if __name__ == "__main__":
     main()
