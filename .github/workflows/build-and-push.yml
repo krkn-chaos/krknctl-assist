@@ -54,11 +54,22 @@ jobs:
       - name: Export ONNX reranker model
         run: |
           cd krkn-assist
+          export HF_HOME=.cache/huggingface
           python3 -c "
           from assist.ranking import OnnxCrossEncoder
           from assist.settings import CROSS_ENCODER_MODEL
+          import os
           print(f'Exporting ONNX reranker: {CROSS_ENCODER_MODEL}')
+          print(f'HF_HOME: {os.environ.get(\"HF_HOME\")}')
           cross_encoder = OnnxCrossEncoder(CROSS_ENCODER_MODEL)
+          onnx_dir = cross_encoder._onnx_model_dir()
+          print(f'ONNX cache directory: {onnx_dir}')
+          print(f'Directory exists: {onnx_dir.exists()}')
+          if onnx_dir.exists():
+              import os
+              for root, dirs, files in os.walk(onnx_dir):
+                  for file in files:
+                      print(f'  {os.path.join(root, file)}')
           print('ONNX reranker exported successfully')
           "
 
@@ -69,8 +80,9 @@ jobs:
           path: krkn-assist/faiss-index/
           retention-days: 1
 
-      - name: Upload ONNX cache artifact
+      - name: Upload ONNX cache artifact (if exists)
         uses: actions/upload-artifact@v4
+        if: hashFiles('krkn-assist/.cache/huggingface/onnx_rerankers/**') != ''
         with:
           name: onnx-cache
           path: krkn-assist/.cache/huggingface/onnx_rerankers/
@@ -130,8 +142,9 @@ jobs:
           name: faiss-index
           path: krkn-assist/faiss-index/
 
-      - name: Download pre-built ONNX cache
+      - name: Download pre-built ONNX cache (optional)
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           name: onnx-cache
           path: krkn-assist/.cache/huggingface/onnx_rerankers/
