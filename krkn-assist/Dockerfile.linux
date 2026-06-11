@@ -158,9 +158,8 @@ RUN pip install --upgrade pip setuptools wheel && \
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies
-# NOTE: torch installed WITH CUDA support for NVIDIA GPU acceleration on Linux
-RUN pip install torch && \
+# Install remaining Python dependencies (torch WITH CUDA for NVIDIA GPU acceleration)
+RUN pip install torch torchvision torchaudio && \
     pip install \
       fastapi \
       uvicorn \
@@ -169,6 +168,7 @@ RUN pip install torch && \
       faiss-cpu \
       onnx \
       onnxruntime \
+      onnxscript \
       "optimum[onnxruntime]>=1.27,<2" \
       requests && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
