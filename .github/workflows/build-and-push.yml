@@ -18,8 +18,8 @@ on:
       - '*'
 
 jobs:
-  prebuild-index:
-    name: Pre-build FAISS Index (x86_64 native)
+  prebuild-models:
+    name: Pre-build FAISS Index & ONNX Reranker (x86_64 native)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -95,7 +95,7 @@ jobs:
           retention-days: 1
 
   build-apple-silicon:
-    needs: prebuild-index
+    needs: prebuild-models
     name: Build Apple Silicon Image
     runs-on: ubuntu-latest
     steps:
@@ -135,7 +135,7 @@ jobs:
             BUILDKIT_INLINE_CACHE=1
 
   build-intel:
-    needs: prebuild-index
+    needs: prebuild-models
     name: Build Intel Multi-arch Image
     runs-on: ubuntu-latest
     steps:
