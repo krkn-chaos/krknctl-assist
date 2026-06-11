@@ -143,10 +143,12 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
 
-# ── Copy GGUF model, pre-built index, and ONNX cache from builder ───────────
+# ── Copy GGUF model and pre-built FAISS index from builder ───────────────────
 COPY --from=builder /models /models
 COPY --from=builder /app/faiss-index /app/faiss-index
-COPY --from=builder /app/.cache/huggingface /app/.cache/huggingface
+
+# ONNX cache comes from GitHub Actions artifact (downloaded before Docker build)
+# If present in build context, it will be copied with application code below
 
 # ── Install Python dependencies in runtime (ensures correct linkage) ─────────
 ARG LLAMA_CPP_VERSION=0.3.19
