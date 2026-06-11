@@ -94,9 +94,8 @@ RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm
 # ── [5/6] Copy application code for index pre-build ──────────────────────────
 COPY krkn-assist/ /app/
 
-# ── [6/6] Pre-build FAISS index and ONNX reranker at build time ──────────────
+# ── [6/6] Pre-build FAISS index at build time ────────────────────────────────
 WORKDIR /app
-ENV HF_HOME=/app/.cache/huggingface
 RUN python3 prebuild_index.py
 
 # ── [5/8] Download GGUF model ────────────────────────────────────────────────
@@ -117,8 +116,7 @@ USER 0
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/app/.cache/huggingface
+    PIP_NO_CACHE_DIR=1
 
 ARG GGML_BACKEND=vulkan
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
@@ -148,10 +146,9 @@ RUN dnf -y install \
     rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
 
-# ── Copy GGUF model, pre-built index, ONNX cache from builder ───────────────
+# ── Copy GGUF model and pre-built index from builder ─────────────────────────
 COPY --from=builder /models /models
 COPY --from=builder /app/faiss-index /app/faiss-index
-COPY --from=builder /app/.cache/huggingface /app/.cache/huggingface
 
 # ── Install Python dependencies in runtime (ensures correct linkage) ─────────
 ARG LLAMA_CPP_VERSION=0.3.19
@@ -175,9 +172,13 @@ RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-package
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies (runtime-only, no torch/sentence-transformers)
-# ONNX reranker and FAISS index are pre-built in builder stage
-RUN pip install \
+# Install remaining Python dependencies (torch CPU for ONNX export at first startup)
+# FAISS index is pre-built in builder stage, ONNX reranker exports on first startup
+RUN pip install --index-url https://download.pytorch.org/whl/cpu \
+      torch \
+      torchvision \
+      torchaudio && \
+    pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -185,6 +186,8 @@ RUN pip install \
       faiss-cpu \
       onnx \
       onnxruntime \
+      onnxscript \
+      "optimum[onnxruntime]>=1.27,<2" \
       requests && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
