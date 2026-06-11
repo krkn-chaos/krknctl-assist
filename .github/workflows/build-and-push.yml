@@ -42,7 +42,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./krkn-assist/Dockerfile
+          file: ./krkn-assist/Dockerfile.apple-silicon
           platforms: linux/arm64
           push: true
           tags: quay.io/krkn-chaos/krknctl-assist:apple-silicon
