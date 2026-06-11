@@ -161,7 +161,8 @@ RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-package
     fi
 
 # Install remaining Python dependencies (WITHOUT torch for size optimization)
-RUN pip install \
+# Use --extra-index-url to force CPU-only packages (avoid CUDA dependencies)
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
