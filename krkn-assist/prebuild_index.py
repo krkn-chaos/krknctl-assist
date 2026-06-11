@@ -23,11 +23,6 @@ def main():
 
     from assist.ranking import create_ranker
     from assist.settings import (
-        DEFAULT_BACKEND,
-        DEFAULT_CPU_ONLY,
-        DEFAULT_DEVICE,
-        DEFAULT_LLAMA_GPU_LAYERS,
-        DEFAULT_LLAMA_MODEL,
         DOCS_DIR,
         INDEX_DIR,
         INDEX_PATH,
@@ -36,19 +31,19 @@ def main():
     )
 
     logger.info("Creating ranker for index pre-build...")
-    logger.info("  Backend: %s", DEFAULT_BACKEND)
-    logger.info("  Device: %s", DEFAULT_DEVICE)
-    logger.info("  Model: %s", DEFAULT_LLAMA_MODEL)
-    logger.info("  GPU layers: %s", DEFAULT_LLAMA_GPU_LAYERS)
+    logger.info("  Backend: torch (CPU-only for build-time indexing)")
+    logger.info("  Device: cpu")
 
     os.makedirs(INDEX_DIR, exist_ok=True)
 
+    # Use torch backend with CPU for build-time indexing
+    # Vulkan/GPU backends are not available during Docker build
     ranker = create_ranker(
-        device_preference=DEFAULT_DEVICE,
-        cpu_only=DEFAULT_CPU_ONLY,
-        backend=DEFAULT_BACKEND,
-        llama_model_path=DEFAULT_LLAMA_MODEL,
-        llama_gpu_layers=DEFAULT_LLAMA_GPU_LAYERS,
+        device_preference="cpu",
+        cpu_only=True,
+        backend="torch",
+        llama_model_path="",
+        llama_gpu_layers=0,
     )
 
     logger.info("Building FAISS index from %s...", DOCS_DIR)
