@@ -67,16 +67,16 @@ RUN pip install --upgrade pip setuptools wheel && \
         pip install --no-binary=llama-cpp-python "llama-cpp-python==${LLAMA_CPP_VERSION}"; \
     fi
 
-# ── [3/4] Python runtime dependencies ────────────────────────────────────────
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
-    pip install \
+# ── [3/4] Python runtime dependencies (WITHOUT torch) ────────────────────────
+# NOTE: PyTorch removed for aggressive size optimization
+# ONNX models must be pre-exported if torch is not available
+RUN pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
       huggingface_hub \
       faiss-cpu \
       onnx \
-      onnxscript \
       onnxruntime \
       "optimum[onnxruntime]>=1.27,<2" \
       requests
@@ -158,16 +158,14 @@ RUN pip install --upgrade pip setuptools wheel && \
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
-    pip install \
+# Install remaining Python dependencies (WITHOUT torch for size optimization)
+RUN pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
       huggingface_hub \
       faiss-cpu \
       onnx \
-      onnxscript \
       onnxruntime \
       "optimum[onnxruntime]>=1.27,<2" \
       requests && \
