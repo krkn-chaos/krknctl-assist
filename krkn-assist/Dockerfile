@@ -123,9 +123,11 @@ RUN dnf -y install \
     dnf -y install --setopt=install_weak_deps=False \
         mesa-vulkan-drivers.aarch64 \
         vulkan-loader.aarch64 \
+        vulkan-tools.aarch64 \
         python3 \
         python3-pip \
-        curl && \
+        curl \
+        git && \
     dnf versionlock add mesa-vulkan-drivers && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
@@ -133,10 +135,46 @@ RUN dnf -y install \
     rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
 
-# ── Copy artifacts from builder ──────────────────────────────────────────────
+# ── Copy GGUF model and llama-cpp-python wheel from builder ──────────────────
 COPY --from=builder /models /models
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+
+# ── Install Python dependencies in runtime (ensures correct linkage) ─────────
+ARG LLAMA_CPP_VERSION=0.3.19
+ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+
+# Copy and install pre-built llama-cpp-python wheel from builder
+RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-packages,target=/tmp/site-packages \
+    cp /tmp/site-packages/llama_cpp_python*.dist-info -r /tmp/ 2>/dev/null || true && \
+    pip install --upgrade pip setuptools wheel && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
+    WHEEL_FOUND=0 && \
+    for PYVER in cp313 cp312 cp311 cp310; do \
+      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl"; \
+      if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        pip install "$WHEEL_URL" && \
+        WHEEL_FOUND=1 && \
+        break; \
+      fi; \
+    done && \
+    if [ "$WHEEL_FOUND" = "0" ]; then \
+      echo "WARNING: No pre-built wheel found for runtime stage"; \
+    fi
+
+# Install remaining Python dependencies
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install \
+      fastapi \
+      uvicorn \
+      "transformers>=4.52.4,<5" \
+      huggingface_hub \
+      faiss-cpu \
+      onnx \
+      onnxscript \
+      onnxruntime \
+      "optimum[onnxruntime]>=1.27,<2" \
+      requests && \
+    find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
 
 # ── Copy application code (last to optimize cache) ───────────────────────────
 COPY krkn-assist/ /app/
