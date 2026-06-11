@@ -87,7 +87,7 @@ RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm
 
 # ── [4/4] Download GGUF model ────────────────────────────────────────────────
 ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF
-ARG GGUF_FILE=Qwen3-Embedding-0.6B-f16.gguf
+ARG GGUF_FILE=Qwen3-Embedding-0.6B-Q8_0.gguf
 
 RUN mkdir -p /models && \
     curl -L --fail --retry 3 --continue-at - \
@@ -108,7 +108,7 @@ ENV PYTHONUNBUFFERED=1 \
 ARG GGML_BACKEND=vulkan
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
 
-ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-Q8_0.gguf
 ENV RETRIEVER_BACKEND=vulkan \
     LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
     LLAMA_GPU_LAYERS=-1
