@@ -1,11 +1,12 @@
-FROM --platform=linux/arm64 fedora:42
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 1: BUILDER - Build dependencies and compile/download packages
+# ═══════════════════════════════════════════════════════════════════════════
+FROM --platform=linux/arm64 fedora:42 AS builder
 
 USER 0
+WORKDIR /build
 
-# ── [1/4] Mesa libkrun Vulkan drivers (locked before anything else) ──────────
-#
-# Must install before any other mesa package lands via transitive deps, or dnf
-# will pull the stock mesa build and the versionlock will conflict.
+# ── [1/5] Mesa libkrun Vulkan drivers + development headers ─────────────────
 RUN dnf -y install \
         dnf-plugins-core \
         dnf-plugin-versionlock && \
@@ -20,27 +21,22 @@ RUN dnf -y install \
     dnf versionlock add mesa-vulkan-drivers && \
     dnf clean all
 
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-WORKDIR /app
-
-ARG GGML_BACKEND=vulkan
-ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
-
-# ── [2/4] Python + build tools ───────────────────────────────────────────────
+# ── [2/5] Build tools + Python development ───────────────────────────────────
 RUN dnf -y install --setopt=install_weak_deps=False \
-    git \
+    git curl \
     python3 python3-pip python3-devel \
     gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
     spirv-headers-devel \
     ccache && \
     dnf clean all
 
-# ── [3/4] llama-cpp-python with Vulkan backend ───────────────────────────────
-#
-# Downloads pre-built wheel from GitHub releases if available, otherwise builds from source.
-# GGML_VULKAN_COOPMAT* disabled: cooperative matrix extensions require
-# Vulkan 1.3 features not guaranteed on Mesa Venus (virtio-gpu).
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+ARG GGML_BACKEND=vulkan
+ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
+
+# ── [3/5] llama-cpp-python with Vulkan backend ───────────────────────────────
 ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
 
@@ -73,23 +69,13 @@ RUN pip install --upgrade pip setuptools wheel && \
         pip install --no-binary=llama-cpp-python "llama-cpp-python==${LLAMA_CPP_VERSION}"; \
     fi
 
-# ── [4/4] Python runtime dependencies ────────────────────────────────────────
-#
-# torch: PyTorch CPU wheel used only for ONNX export when a cached reranker is not
-#        available. Embeddings stay on llama.cpp/Vulkan.
-#
-# onnxruntime: used by OnnxCrossEncoder for cross-encoder reranking.
-#              No GPU dependency required for 20-document workloads.
-#
-# optimum[onnxruntime]: preferred ONNX export path from HuggingFace models.
-#
-# FlagEmbedding intentionally removed: FlagReranker replaced by OnnxCrossEncoder.
+# ── [4/5] Python runtime dependencies ────────────────────────────────────────
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
-      "huggingface_hub[cli]>=0.30,<1" \
+      huggingface_hub \
       faiss-cpu \
       onnx \
       onnxscript \
@@ -97,20 +83,62 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
       "optimum[onnxruntime]>=1.27,<2" \
       requests
 
-ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+# Cleanup Python cache
+RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
+
+# ── [5/5] Download GGUF model ────────────────────────────────────────────────
 ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF
 ARG GGUF_FILE=Qwen3-Embedding-0.6B-f16.gguf
 
-ENV RETRIEVER_BACKEND=vulkan \
-    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
-    LLAMA_GPU_LAYERS=-1
-
-# Download GGUF model from HuggingFace
 RUN mkdir -p /models && \
     curl -L --fail --retry 3 --continue-at - \
     -o /models/${GGUF_FILE} \
     "https://huggingface.co/${GGUF_REPO}/resolve/main/${GGUF_FILE}"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 2: RUNTIME - Minimal runtime image
+# ═══════════════════════════════════════════════════════════════════════════
+FROM --platform=linux/arm64 fedora:42 AS runtime
+
+USER 0
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+ARG GGML_BACKEND=vulkan
+ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
+
+ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+ENV RETRIEVER_BACKEND=vulkan \
+    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
+    LLAMA_GPU_LAYERS=-1
+
+# ── Install ONLY runtime dependencies ────────────────────────────────────────
+RUN dnf -y install \
+        dnf-plugins-core \
+        dnf-plugin-versionlock && \
+    dnf -y copr enable slp/mesa-libkrun-vulkan && \
+    dnf -y install --setopt=install_weak_deps=False \
+        mesa-vulkan-drivers.aarch64 \
+        vulkan-loader.aarch64 \
+        python3 \
+        python3-pip \
+        curl && \
+    dnf versionlock add mesa-vulkan-drivers && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
+    rm -rf /tmp/* /var/tmp/* && \
+    rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
+    find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
+
+# ── Copy artifacts from builder ──────────────────────────────────────────────
+COPY --from=builder /models /models
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# ── Copy application code (last to optimize cache) ───────────────────────────
 COPY krkn-assist/ /app/
 
 EXPOSE 8080 18080

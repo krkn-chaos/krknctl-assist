@@ -1,17 +1,21 @@
-FROM fedora:42
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 1: BUILDER - Build dependencies and compile/download packages
+# ═══════════════════════════════════════════════════════════════════════════
+FROM fedora:42 AS builder
 
 USER 0
+WORKDIR /build
 
+ARG TARGETARCH
 ARG GGML_BACKEND=vulkan
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-WORKDIR /app
+    PIP_NO_CACHE_DIR=1 \
+    GGML_BACKEND_BUILT=${GGML_BACKEND}
 
-ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
-
+# ── [1/4] Vulkan drivers + development headers ───────────────────────────────
 RUN dnf -y install --setopt=install_weak_deps=False \
-    git \
+    git curl \
     python3 python3-pip python3-devel \
     gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
     mesa-dri-drivers \
@@ -25,10 +29,9 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     ccache && \
     dnf clean all
 
-# Downloads pre-built wheel from GitHub releases if available, otherwise builds from source.
+# ── [2/4] llama-cpp-python with Vulkan backend ───────────────────────────────
 ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
-ARG TARGETARCH
 
 RUN pip install --upgrade pip setuptools wheel && \
     if [ "$TARGETARCH" = "amd64" ]; then \
@@ -64,12 +67,13 @@ RUN pip install --upgrade pip setuptools wheel && \
         pip install --no-binary=llama-cpp-python "llama-cpp-python==${LLAMA_CPP_VERSION}"; \
     fi
 
+# ── [3/4] Python runtime dependencies ────────────────────────────────────────
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
-      "huggingface_hub[cli]>=0.30,<1" \
+      huggingface_hub \
       faiss-cpu \
       onnx \
       onnxscript \
@@ -77,20 +81,58 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
       "optimum[onnxruntime]>=1.27,<2" \
       requests
 
-ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+# Cleanup Python cache
+RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
+
+# ── [4/4] Download GGUF model ────────────────────────────────────────────────
 ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF
 ARG GGUF_FILE=Qwen3-Embedding-0.6B-f16.gguf
 
-ENV RETRIEVER_BACKEND=vulkan \
-    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
-    LLAMA_GPU_LAYERS=-1
-
-# Download GGUF model from HuggingFace
 RUN mkdir -p /models && \
     curl -L --fail --retry 3 --continue-at - \
     -o /models/${GGUF_FILE} \
     "https://huggingface.co/${GGUF_REPO}/resolve/main/${GGUF_FILE}"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 2: RUNTIME - Minimal runtime image
+# ═══════════════════════════════════════════════════════════════════════════
+FROM fedora:42 AS runtime
+
+USER 0
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+ARG GGML_BACKEND=vulkan
+ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
+
+ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-f16.gguf
+ENV RETRIEVER_BACKEND=vulkan \
+    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
+    LLAMA_GPU_LAYERS=-1
+
+# ── Install ONLY runtime dependencies ────────────────────────────────────────
+RUN dnf -y install --setopt=install_weak_deps=False \
+        mesa-dri-drivers \
+        mesa-vulkan-drivers \
+        vulkan-loader \
+        python3 \
+        python3-pip \
+        curl && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
+    rm -rf /tmp/* /var/tmp/* && \
+    rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
+    find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
+
+# ── Copy artifacts from builder ──────────────────────────────────────────────
+COPY --from=builder /models /models
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# ── Copy application code (last to optimize cache) ───────────────────────────
 COPY krkn-assist/ /app/
 
 EXPOSE 8080 18080
