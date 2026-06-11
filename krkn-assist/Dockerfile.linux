@@ -159,8 +159,8 @@ RUN pip install --upgrade pip setuptools wheel && \
     fi
 
 # Install remaining Python dependencies
-# Install torch CPU FIRST to prevent optimum from pulling CUDA version
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch && \
+# NOTE: torch installed WITH CUDA support for NVIDIA GPU acceleration on Linux
+RUN pip install torch && \
     pip install \
       fastapi \
       uvicorn \
