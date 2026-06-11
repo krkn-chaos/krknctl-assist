@@ -54,24 +54,30 @@ jobs:
       - name: Export ONNX reranker model
         run: |
           cd krkn-assist
-          export HF_HOME=.cache/huggingface
-          python3 -c "
+          export HF_HOME=$PWD/.cache/huggingface
+          python3 << 'PYTHON_SCRIPT'
           from assist.ranking import OnnxCrossEncoder
           from assist.settings import CROSS_ENCODER_MODEL
           import os
+
           print(f'Exporting ONNX reranker: {CROSS_ENCODER_MODEL}')
-          print(f'HF_HOME: {os.environ.get(\"HF_HOME\")}')
+          print(f'HF_HOME: {os.environ.get("HF_HOME")}')
+
           cross_encoder = OnnxCrossEncoder(CROSS_ENCODER_MODEL)
           onnx_dir = cross_encoder._onnx_model_dir()
+
           print(f'ONNX cache directory: {onnx_dir}')
           print(f'Directory exists: {onnx_dir.exists()}')
+
           if onnx_dir.exists():
-              import os
               for root, dirs, files in os.walk(onnx_dir):
                   for file in files:
-                      print(f'  {os.path.join(root, file)}')
+                      filepath = os.path.join(root, file)
+                      size_mb = os.path.getsize(filepath) / (1024 * 1024)
+                      print(f'  {filepath} ({size_mb:.2f} MB)')
+
           print('ONNX reranker exported successfully')
-          "
+          PYTHON_SCRIPT
 
       - name: Upload FAISS index artifact
         uses: actions/upload-artifact@v4
