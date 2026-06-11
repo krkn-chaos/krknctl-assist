@@ -160,9 +160,13 @@ RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-package
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies (WITHOUT torch for size optimization)
-# Use --extra-index-url to prevent pulling CUDA torch as transitive dependency
-RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+# Install remaining Python dependencies (torch CPU required for ONNX export)
+# Use --index-url to force CPU-only torch installation
+RUN pip install --index-url https://download.pytorch.org/whl/cpu \
+      torch \
+      torchvision \
+      torchaudio && \
+    pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -170,6 +174,7 @@ RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu \
       faiss-cpu \
       onnx \
       onnxruntime \
+      onnxscript \
       "optimum[onnxruntime]>=1.27,<2" \
       requests && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
