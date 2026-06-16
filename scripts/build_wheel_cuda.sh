@@ -32,23 +32,17 @@ if [[ -n "$TARGET_PLATFORM" ]]; then
       exit 1
       ;;
   esac
-  echo "🔀 Cross-compiling for platform: $CONTAINER_PLATFORM"
+  echo "🔀 Building for platform: $CONTAINER_PLATFORM"
 else
-  # Auto-detect - must be x86_64
+  # No platform specified - always build x86_64 CUDA wheel
+  # Podman/Docker will handle emulation if running on ARM64 host
+  WHEEL_PLATFORM="linux_x86_64"
+  CONTAINER_PLATFORM="linux/amd64"
+
   ARCH="$(uname -m)"
-  case "$ARCH" in
-    x86_64|amd64)
-      WHEEL_PLATFORM="linux_x86_64"
-      CONTAINER_PLATFORM="linux/amd64"
-      ;;
-    *)
-      echo "❌ CUDA build requires x86_64 architecture"
-      echo "   Detected: $ARCH"
-      echo "   For ARM64, use Vulkan wheel instead:"
-      echo "   ./scripts/build_wheel_vulkan.sh"
-      exit 1
-      ;;
-  esac
+  if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
+    echo "ℹ️  Building x86_64 CUDA wheel on ARM64 host (using Podman VM emulation)"
+  fi
 fi
 
 echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (CUDA backend)"
