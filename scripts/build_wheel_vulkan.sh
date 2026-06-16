@@ -10,11 +10,6 @@ TARGET_PLATFORM="${3:-}"  # Optional: linux/arm64, linux/amd64 for cross-compila
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (Vulkan backend)"
-echo "   Output: $OUTPUT_DIR"
-echo "   Target: Apple Silicon / ARM64"
-echo ""
-
 # Detect or use specified platform
 if [[ -n "$TARGET_PLATFORM" ]]; then
   # Platform explicitly specified for cross-compilation
@@ -54,6 +49,11 @@ else
       ;;
   esac
 fi
+
+echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (Vulkan backend)"
+echo "   Output: $OUTPUT_DIR"
+echo "   Platform: ${CONTAINER_PLATFORM}"
+echo ""
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"

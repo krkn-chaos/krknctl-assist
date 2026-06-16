@@ -11,12 +11,6 @@ TARGET_PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compila
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (CUDA backend)"
-echo "   Output: $OUTPUT_DIR"
-echo "   Platform: ${CONTAINER_PLATFORM}"
-echo "   CUDA: ${CUDA_VERSION}"
-echo ""
-
 # Detect or use specified platform
 if [[ -n "$TARGET_PLATFORM" ]]; then
   # Platform explicitly specified for cross-compilation
@@ -54,6 +48,12 @@ else
       ;;
   esac
 fi
+
+echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (CUDA backend)"
+echo "   Output: $OUTPUT_DIR"
+echo "   Platform: ${CONTAINER_PLATFORM}"
+echo "   CUDA: ${CUDA_VERSION}"
+echo ""
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
