@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build llama-cpp-python wheel with CUDA backend (for Linux NVIDIA)
-# Use this on x86_64 Linux with NVIDIA GPU
+# Build llama-cpp-python wheel with CUDA backend (for Linux NVIDIA x86_64)
+# CUDA wheels are x86_64 only - ARM64 NVIDIA support is rare (Jetson embedded)
+# For ARM64 use Vulkan wheel instead: ./scripts/build_wheel_vulkan.sh
 
 LLAMA_CPP_VERSION="${1:-0.3.19}"
 OUTPUT_DIR="${2:-./wheels}"
