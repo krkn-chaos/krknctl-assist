@@ -7,29 +7,53 @@ set -euo pipefail
 LLAMA_CPP_VERSION="${1:-0.3.19}"
 OUTPUT_DIR="${2:-./wheels}"
 CUDA_VERSION="${3:-12.6}"
+PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compilation
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (CUDA backend)"
 echo "   Output: $OUTPUT_DIR"
-echo "   Target: Linux x86_64 / NVIDIA GPU"
+echo "   Platform: ${CONTAINER_PLATFORM}"
 echo "   CUDA: ${CUDA_VERSION}"
 echo ""
 
-# Detect architecture
-ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64|amd64)
-    PLATFORM="linux_x86_64"
-    CONTAINER_PLATFORM="linux/amd64"
-    ;;
-  *)
-    echo "❌ This script is for x86_64/amd64 only"
-    echo "   Detected: $ARCH"
-    echo "   Use build_wheel_vulkan.sh for ARM64/Apple Silicon"
-    exit 1
-    ;;
-esac
+# Detect or use specified platform
+if [[ -n "$PLATFORM" ]]; then
+  # Platform explicitly specified for cross-compilation
+  CONTAINER_PLATFORM="$PLATFORM"
+  case "$PLATFORM" in
+    linux/arm64|linux/aarch64)
+      WHEEL_PLATFORM="linux_aarch64"
+      ;;
+    linux/amd64|linux/x86_64)
+      WHEEL_PLATFORM="linux_x86_64"
+      ;;
+    *)
+      echo "❌ Unsupported platform: $PLATFORM"
+      echo "   Use: linux/arm64 or linux/amd64"
+      exit 1
+      ;;
+  esac
+  echo "🔀 Cross-compiling for platform: $CONTAINER_PLATFORM"
+else
+  # Auto-detect from host architecture
+  ARCH="$(uname -m)"
+  case "$ARCH" in
+    x86_64|amd64)
+      WHEEL_PLATFORM="linux_x86_64"
+      CONTAINER_PLATFORM="linux/amd64"
+      ;;
+    arm64|aarch64)
+      WHEEL_PLATFORM="linux_aarch64"
+      CONTAINER_PLATFORM="linux/arm64"
+      ;;
+    *)
+      echo "❌ Unsupported architecture: $ARCH"
+      echo "   Supported: x86_64, aarch64"
+      exit 1
+      ;;
+  esac
+fi
 
 # Create output directory
 mkdir -p "$OUTPUT_DIR"
