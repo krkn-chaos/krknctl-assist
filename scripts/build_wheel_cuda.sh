@@ -7,7 +7,7 @@ set -euo pipefail
 LLAMA_CPP_VERSION="${1:-0.3.19}"
 OUTPUT_DIR="${2:-./wheels}"
 CUDA_VERSION="${3:-12.6}"
-PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compilation
+TARGET_PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compilation
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,10 +18,10 @@ echo "   CUDA: ${CUDA_VERSION}"
 echo ""
 
 # Detect or use specified platform
-if [[ -n "$PLATFORM" ]]; then
+if [[ -n "$TARGET_PLATFORM" ]]; then
   # Platform explicitly specified for cross-compilation
-  CONTAINER_PLATFORM="$PLATFORM"
-  case "$PLATFORM" in
+  CONTAINER_PLATFORM="$TARGET_PLATFORM"
+  case "$TARGET_PLATFORM" in
     linux/arm64|linux/aarch64)
       WHEEL_PLATFORM="linux_aarch64"
       ;;
