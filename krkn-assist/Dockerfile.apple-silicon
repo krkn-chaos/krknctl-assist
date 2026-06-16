@@ -36,13 +36,14 @@ ENV PYTHONUNBUFFERED=1 \
 ARG GGML_BACKEND=vulkan
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
 
-# ── [3/5] llama-cpp-python with Vulkan backend ───────────────────────────────
+# ── [3/5] llama-cpp-python with Vulkan backend (Apple Silicon) ──────────────
 ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+ARG LLAMA_BACKEND=vulkan
 
 RUN pip install --upgrade pip setuptools wheel && \
-    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
-    echo "Searching for pre-built wheel at ${BASE_URL}..." && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    echo "Searching for pre-built ${LLAMA_BACKEND} wheel at ${BASE_URL}..." && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl"; \

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LLAMA_CPP_VERSION="${1:?Missing version argument. Usage: $0 <version> [wheel-file]}"
+LLAMA_CPP_VERSION="${1:?Missing version argument. Usage: $0 <version> [wheel-file] [backend]}"
 WHEEL_FILE="${2:-}"
+BACKEND="${3:-vulkan}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -37,7 +38,7 @@ if [[ ! -f "$WHEEL_FILE" ]]; then
 fi
 
 WHEEL_NAME="$(basename "$WHEEL_FILE")"
-TAG="llama-cpp-${LLAMA_CPP_VERSION}"
+TAG="llama-cpp-${LLAMA_CPP_VERSION}-${BACKEND}"
 
 echo "Uploading wheel to GitHub release"
 echo "  Tag: $TAG"
@@ -70,14 +71,28 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 else
   echo "Creating new release $TAG..."
 
-  gh release create "$TAG" \
-    --title "llama-cpp-python ${LLAMA_CPP_VERSION} (Vulkan)" \
-    --notes "Pre-compiled llama-cpp-python wheel with Vulkan support
-
-- Version: ${LLAMA_CPP_VERSION}
-- Backend: Vulkan
+  # Customize notes based on backend
+  if [[ "$BACKEND" == "cuda" ]]; then
+    BACKEND_TITLE="CUDA"
+    BACKEND_NOTES="- Backend: CUDA
+- CMAKE_CUDA_ARCHITECTURES: all
+- Target: Linux x86_64 / NVIDIA GPU"
+    BUILD_SCRIPT="./scripts/build_wheel_cuda.sh ${LLAMA_CPP_VERSION}"
+  else
+    BACKEND_TITLE="Vulkan"
+    BACKEND_NOTES="- Backend: Vulkan
 - GGML_VULKAN_COOPMAT: OFF
 - GGML_VULKAN_COOPMAT2: OFF
+- Target: Apple Silicon / ARM64"
+    BUILD_SCRIPT="./scripts/build_wheel_vulkan.sh ${LLAMA_CPP_VERSION}"
+  fi
+
+  gh release create "$TAG" \
+    --title "llama-cpp-python ${LLAMA_CPP_VERSION} (${BACKEND_TITLE})" \
+    --notes "Pre-compiled llama-cpp-python wheel with ${BACKEND_TITLE} support
+
+- Version: ${LLAMA_CPP_VERSION}
+${BACKEND_NOTES}
 
 ## Installation
 
@@ -88,8 +103,8 @@ pip install https://github.com/krkn-chaos/krknctl-assist/releases/download/${TAG
 ## Build from source
 
 \`\`\`bash
-./scripts/build_wheel_local.sh ${LLAMA_CPP_VERSION}
-./scripts/upload_wheel.sh ${LLAMA_CPP_VERSION}
+${BUILD_SCRIPT}
+./scripts/upload_wheel.sh ${LLAMA_CPP_VERSION} wheels/llama_cpp_python-*.whl ${BACKEND}
 \`\`\`
 " \
     "$WHEEL_FILE"

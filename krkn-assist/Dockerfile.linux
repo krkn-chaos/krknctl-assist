@@ -29,9 +29,10 @@ RUN dnf -y install --setopt=install_weak_deps=False \
     ccache && \
     dnf clean all
 
-# ── [2/4] llama-cpp-python with Vulkan backend ───────────────────────────────
+# ── [2/4] llama-cpp-python with CUDA backend (Linux NVIDIA) ─────────────────
 ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+ARG LLAMA_BACKEND=cuda
 
 RUN pip install --upgrade pip setuptools wheel && \
     if [ "$TARGETARCH" = "amd64" ]; then \
@@ -39,8 +40,8 @@ RUN pip install --upgrade pip setuptools wheel && \
     else \
       WHEEL_ARCH="aarch64"; \
     fi && \
-    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
-    echo "Searching for pre-built wheel at ${BASE_URL} (${WHEEL_ARCH})..." && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    echo "Searching for pre-built ${LLAMA_BACKEND} wheel at ${BASE_URL} (${WHEEL_ARCH})..." && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_${WHEEL_ARCH}.whl"; \
@@ -58,9 +59,8 @@ RUN pip install --upgrade pip setuptools wheel && \
       echo "No pre-built wheel found, building from source (this may take a while)..." && \
       export PATH="/usr/lib64/ccache:$PATH" && \
       CMAKE_ARGS="\
-        -DGGML_VULKAN=on \
-        -DGGML_VULKAN_COOPMAT=OFF \
-        -DGGML_VULKAN_COOPMAT2=OFF \
+        -DGGML_CUDA=on \
+        -DCMAKE_CUDA_ARCHITECTURES=all \
         -DCMAKE_C_COMPILER_LAUNCHER=ccache \
         -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       " FORCE_CMAKE=1 \
