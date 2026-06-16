@@ -75,8 +75,10 @@ podman run --rm \
     echo "Installing build dependencies..."
     dnf -y install --setopt=install_weak_deps=False \
       python3 python3-pip python3-devel \
-      gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
-      ccache
+      gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config
+
+    # ccache is optional, not available on UBI9
+    dnf -y install ccache 2>/dev/null || echo "ccache not available, continuing without it"
 
     echo "Upgrading pip..."
     pip3 install --upgrade pip setuptools wheel
