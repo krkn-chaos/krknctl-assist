@@ -84,12 +84,9 @@ podman run --rm \
     pip3 install --upgrade pip setuptools wheel
 
     echo "Building llama-cpp-python ${LLAMA_CPP_VERSION} with CUDA ${CUDA_VERSION} backend..."
-    export PATH="/usr/lib64/ccache:$PATH"
     CMAKE_ARGS="\
       -DGGML_CUDA=on \
       -DCMAKE_CUDA_ARCHITECTURES=all \
-      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     " FORCE_CMAKE=1 \
       pip3 wheel --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_VERSION}" \
