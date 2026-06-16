@@ -12,39 +12,40 @@ TARGET_PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compila
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect or use specified platform
+# CUDA wheels are x86_64 only
+# ARM64 CUDA exists but is rare (Jetson) and CUDA Docker images don't support it well
 if [[ -n "$TARGET_PLATFORM" ]]; then
-  # Platform explicitly specified for cross-compilation
-  CONTAINER_PLATFORM="$TARGET_PLATFORM"
   case "$TARGET_PLATFORM" in
-    linux/arm64|linux/aarch64)
-      WHEEL_PLATFORM="linux_aarch64"
-      ;;
     linux/amd64|linux/x86_64)
+      CONTAINER_PLATFORM="linux/amd64"
       WHEEL_PLATFORM="linux_x86_64"
       ;;
+    linux/arm64|linux/aarch64)
+      echo "❌ CUDA wheels for ARM64 are not supported"
+      echo "   ARM64 NVIDIA GPUs are rare (mainly Jetson embedded)"
+      echo "   For ARM64, use Vulkan wheel instead:"
+      echo "   ./scripts/build_wheel_vulkan.sh $LLAMA_CPP_VERSION $OUTPUT_DIR linux/arm64"
+      exit 1
+      ;;
     *)
-      echo "❌ Unsupported platform: $PLATFORM"
-      echo "   Use: linux/arm64 or linux/amd64"
+      echo "❌ Unsupported platform: $TARGET_PLATFORM"
       exit 1
       ;;
   esac
   echo "🔀 Cross-compiling for platform: $CONTAINER_PLATFORM"
 else
-  # Auto-detect from host architecture
+  # Auto-detect - must be x86_64
   ARCH="$(uname -m)"
   case "$ARCH" in
     x86_64|amd64)
       WHEEL_PLATFORM="linux_x86_64"
       CONTAINER_PLATFORM="linux/amd64"
       ;;
-    arm64|aarch64)
-      WHEEL_PLATFORM="linux_aarch64"
-      CONTAINER_PLATFORM="linux/arm64"
-      ;;
     *)
-      echo "❌ Unsupported architecture: $ARCH"
-      echo "   Supported: x86_64, aarch64"
+      echo "❌ CUDA build requires x86_64 architecture"
+      echo "   Detected: $ARCH"
+      echo "   For ARM64, use Vulkan wheel instead:"
+      echo "   ./scripts/build_wheel_vulkan.sh"
       exit 1
       ;;
   esac
