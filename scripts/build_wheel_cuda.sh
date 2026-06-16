@@ -76,10 +76,10 @@ podman run --rm \
     dnf -y install --setopt=install_weak_deps=False \
       python3 python3-pip python3-devel \
       gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
-      ccache >/dev/null 2>&1
+      ccache
 
     echo "Upgrading pip..."
-    pip3 install --upgrade pip setuptools wheel >/dev/null 2>&1
+    pip3 install --upgrade pip setuptools wheel
 
     echo "Building llama-cpp-python ${LLAMA_CPP_VERSION} with CUDA ${CUDA_VERSION} backend..."
     export PATH="/usr/lib64/ccache:$PATH"
