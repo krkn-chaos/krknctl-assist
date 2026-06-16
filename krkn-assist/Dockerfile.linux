@@ -137,6 +137,7 @@ RUN dnf -y install --setopt=install_weak_deps=False \
         python3-pip \
         curl \
         git && \
+    dnf -y install mesa-vulkan-drivers-nvidia 2>/dev/null || true && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
     rm -rf /tmp/* /var/tmp/* && \
