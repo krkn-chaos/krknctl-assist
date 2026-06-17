@@ -127,17 +127,12 @@ ENV RETRIEVER_BACKEND=vulkan \
     LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
     LLAMA_GPU_LAYERS=-1
 
-# ── Install ONLY runtime dependencies ────────────────────────────────────────
+# ── Install ONLY runtime dependencies (CUDA runtime already in base image) ──
 RUN dnf -y install --setopt=install_weak_deps=False \
-        mesa-dri-drivers \
-        mesa-vulkan-drivers \
-        vulkan-loader \
-        vulkan-tools \
         python3 \
         python3-pip \
         curl \
         git && \
-    dnf -y install mesa-vulkan-drivers-nvidia 2>/dev/null || true && \
     dnf clean all && \
     rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
     rm -rf /tmp/* /var/tmp/* && \
