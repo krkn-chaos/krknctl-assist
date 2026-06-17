@@ -12,8 +12,7 @@ TARGET_PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compila
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# CUDA wheels are x86_64 only
-# ARM64 CUDA exists but is rare (Jetson) and CUDA Docker images don't support it well
+# Detect platform
 if [[ -n "$TARGET_PLATFORM" ]]; then
   case "$TARGET_PLATFORM" in
     linux/amd64|linux/x86_64)
@@ -21,27 +20,25 @@ if [[ -n "$TARGET_PLATFORM" ]]; then
       WHEEL_PLATFORM="linux_x86_64"
       ;;
     linux/arm64|linux/aarch64)
-      echo "❌ CUDA wheels for ARM64 are not supported"
-      echo "   ARM64 NVIDIA GPUs are rare (mainly Jetson embedded)"
-      echo "   For ARM64, use Vulkan wheel instead:"
-      echo "   ./scripts/build_wheel_vulkan.sh $LLAMA_CPP_VERSION $OUTPUT_DIR linux/arm64"
-      exit 1
+      CONTAINER_PLATFORM="linux/arm64"
+      WHEEL_PLATFORM="linux_aarch64"
       ;;
     *)
       echo "❌ Unsupported platform: $TARGET_PLATFORM"
+      echo "   Use: linux/amd64 or linux/arm64"
       exit 1
       ;;
   esac
   echo "🔀 Building for platform: $CONTAINER_PLATFORM"
 else
-  # No platform specified - always build x86_64 CUDA wheel
-  # Podman/Docker will handle emulation if running on ARM64 host
+  # No platform specified - default to x86_64 (most common for NVIDIA GPUs)
   WHEEL_PLATFORM="linux_x86_64"
   CONTAINER_PLATFORM="linux/amd64"
 
   ARCH="$(uname -m)"
   if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
-    echo "ℹ️  Building x86_64 CUDA wheel on ARM64 host (using Podman VM emulation)"
+    echo "ℹ️  Building x86_64 CUDA wheel on ARM64 host"
+    echo "   For ARM64 CUDA wheel, use: $0 $LLAMA_CPP_VERSION $OUTPUT_DIR $CUDA_VERSION linux/arm64"
   fi
 fi
 
