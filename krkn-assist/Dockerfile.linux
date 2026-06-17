@@ -108,9 +108,9 @@ RUN mkdir -p /models && \
     "https://huggingface.co/${GGUF_REPO}/resolve/main/${GGUF_FILE}"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STAGE 2: RUNTIME - Minimal runtime image
+# STAGE 2: RUNTIME - CUDA runtime image (smaller, includes CUDA libs)
 # ═══════════════════════════════════════════════════════════════════════════
-FROM fedora:42 AS runtime
+FROM docker.io/nvidia/cuda:12.6.1-runtime-ubi9 AS runtime
 
 USER 0
 WORKDIR /app
@@ -119,7 +119,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/app/.cache/huggingface
 
-ARG GGML_BACKEND=vulkan
+ARG GGML_BACKEND=cuda
 ENV GGML_BACKEND_BUILT=${GGML_BACKEND}
 
 ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-Q8_0.gguf
