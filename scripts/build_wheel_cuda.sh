@@ -64,7 +64,7 @@ podman run --rm \
   -v "$OUTPUT_DIR_ABS:/output" \
   -e "LLAMA_CPP_VERSION=$LLAMA_CPP_VERSION" \
   -e "CUDA_VERSION=$CUDA_VERSION" \
-  nvidia/cuda:${CUDA_VERSION}.1-devel-ubi9 \
+  docker.io/nvidia/cuda:${CUDA_VERSION}.1-devel-ubi9 \
   bash -c '
     set -euo pipefail
 
