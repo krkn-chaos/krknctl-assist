@@ -8,39 +8,25 @@ set -euo pipefail
 LLAMA_CPP_VERSION="${1:-0.3.19}"
 OUTPUT_DIR="${2:-./wheels}"
 CUDA_VERSION="${3:-12.6}"
-TARGET_PLATFORM="${4:-}"  # Optional: linux/arm64, linux/amd64 for cross-compilation
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Detect platform
-if [[ -n "$TARGET_PLATFORM" ]]; then
-  case "$TARGET_PLATFORM" in
-    linux/amd64|linux/x86_64)
-      CONTAINER_PLATFORM="linux/amd64"
-      WHEEL_PLATFORM="linux_x86_64"
-      ;;
-    linux/arm64|linux/aarch64)
-      CONTAINER_PLATFORM="linux/arm64"
-      WHEEL_PLATFORM="linux_aarch64"
-      ;;
-    *)
-      echo "❌ Unsupported platform: $TARGET_PLATFORM"
-      echo "   Use: linux/amd64 or linux/arm64"
-      exit 1
-      ;;
-  esac
-  echo "🔀 Building for platform: $CONTAINER_PLATFORM"
-else
-  # No platform specified - default to x86_64 (most common for NVIDIA GPUs)
-  WHEEL_PLATFORM="linux_x86_64"
-  CONTAINER_PLATFORM="linux/amd64"
-
-  ARCH="$(uname -m)"
-  if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
-    echo "ℹ️  Building x86_64 CUDA wheel on ARM64 host"
-    echo "   For ARM64 CUDA wheel, use: $0 $LLAMA_CPP_VERSION $OUTPUT_DIR $CUDA_VERSION linux/arm64"
-  fi
-fi
+# Auto-detect platform - native build only, no cross-compilation
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64)
+    WHEEL_PLATFORM="linux_x86_64"
+    CONTAINER_PLATFORM="linux/amd64"
+    ;;
+  arm64|aarch64)
+    WHEEL_PLATFORM="linux_aarch64"
+    CONTAINER_PLATFORM="linux/arm64"
+    ;;
+  *)
+    echo "❌ Unsupported architecture: $ARCH"
+    exit 1
+    ;;
+esac
 
 echo "🔧 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (CUDA backend)"
 echo "   Output: $OUTPUT_DIR"
