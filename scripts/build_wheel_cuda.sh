@@ -65,11 +65,16 @@ podman run --rm \
     echo "Building llama-cpp-python ${LLAMA_CPP_VERSION} with CUDA ${CUDA_VERSION} backend..."
     # Use shared CUDA libraries instead of static linking
     # This makes the wheel much smaller but requires CUDA runtime on target system
-    # Use only modern GPU architectures (Turing, Ampere, Ada, Hopper) instead of "all"
-    # to reduce wheel size (all = Maxwell onwards = 10+ arch = huge wheel)
+    # Supported GPU architectures (realistic for this tool):
+    # 70: V100 (DGX-1/DGX-2)
+    # 75: Turing consumer (RTX 20xx, GTX 1660 Ti)
+    # 80: A100 (DGX A100, cloud)
+    # 86: Ampere consumer (RTX 30xx)
+    # 89: Ada Lovelace consumer (RTX 40xx)
+    # 90: Hopper (H100 cloud GPU sharing - AWS p5, GCP, Azure)
     CMAKE_ARGS="\
       -DGGML_CUDA=on \
-      -DCMAKE_CUDA_ARCHITECTURES=75;80;86;89;90 \
+      -DCMAKE_CUDA_ARCHITECTURES=70;75;80;86;89;90 \
       -DGGML_STATIC=off \
       -DBUILD_SHARED_LIBS=on \
     " FORCE_CMAKE=1 \
