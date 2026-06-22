@@ -97,9 +97,17 @@ else
 - Target: Apple Silicon / ARM64"
       BUILD_SCRIPT="./scripts/build_wheel_apple_silicon.sh ${LLAMA_CPP_VERSION}"
       ;;
+    cpu)
+      BACKEND_TITLE="CPU Only"
+      BACKEND_NOTES="- Backend: CPU (no GPU acceleration)
+- GGML_CUDA: OFF
+- GGML_VULKAN: OFF
+- Target: Systems without GPU (fallback)"
+      BUILD_SCRIPT="./scripts/build_wheel_cpu.sh ${LLAMA_CPP_VERSION}"
+      ;;
     *)
       echo "❌ Unknown backend: $BACKEND"
-      echo "   Supported: vulkan, cuda-consumer, cuda-datacenter"
+      echo "   Supported: vulkan, cuda-consumer, cuda-datacenter, cpu"
       exit 1
       ;;
   esac
