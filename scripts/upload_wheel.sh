@@ -72,20 +72,37 @@ else
   echo "Creating new release $TAG..."
 
   # Customize notes based on backend
-  if [[ "$BACKEND" == "cuda" ]]; then
-    BACKEND_TITLE="CUDA"
-    BACKEND_NOTES="- Backend: CUDA
-- CMAKE_CUDA_ARCHITECTURES: all
-- Target: Linux x86_64 / NVIDIA GPU"
-    BUILD_SCRIPT="./scripts/build_wheel_cuda.sh ${LLAMA_CPP_VERSION}"
-  else
-    BACKEND_TITLE="Vulkan"
-    BACKEND_NOTES="- Backend: Vulkan
+  case "$BACKEND" in
+    cuda-consumer)
+      BACKEND_TITLE="CUDA Consumer"
+      BACKEND_NOTES="- Backend: CUDA
+- CMAKE_CUDA_ARCHITECTURES: 75, 86, 89
+- GPU Support: RTX 20xx/30xx/40xx, GTX 1660 Ti, Tesla T4
+- Target: Consumer workstations, desktop, lab environments"
+      BUILD_SCRIPT="./scripts/build_wheel_linux_nvidia_consumer.sh ${LLAMA_CPP_VERSION}"
+      ;;
+    cuda-datacenter)
+      BACKEND_TITLE="CUDA Datacenter"
+      BACKEND_NOTES="- Backend: CUDA
+- CMAKE_CUDA_ARCHITECTURES: 70, 80, 90
+- GPU Support: V100, A100, H100, Grace Hopper
+- Target: DGX systems, cloud instances (AWS, GCP, Azure)"
+      BUILD_SCRIPT="./scripts/build_wheel_linux_nvidia_datacenter.sh ${LLAMA_CPP_VERSION}"
+      ;;
+    vulkan)
+      BACKEND_TITLE="Vulkan"
+      BACKEND_NOTES="- Backend: Vulkan
 - GGML_VULKAN_COOPMAT: OFF
 - GGML_VULKAN_COOPMAT2: OFF
 - Target: Apple Silicon / ARM64"
-    BUILD_SCRIPT="./scripts/build_wheel_vulkan.sh ${LLAMA_CPP_VERSION}"
-  fi
+      BUILD_SCRIPT="./scripts/build_wheel_apple_silicon.sh ${LLAMA_CPP_VERSION}"
+      ;;
+    *)
+      echo "❌ Unknown backend: $BACKEND"
+      echo "   Supported: vulkan, cuda-consumer, cuda-datacenter"
+      exit 1
+      ;;
+  esac
 
   gh release create "$TAG" \
     --title "llama-cpp-python ${LLAMA_CPP_VERSION} (${BACKEND_TITLE})" \

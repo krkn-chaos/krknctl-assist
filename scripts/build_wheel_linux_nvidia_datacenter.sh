@@ -1,4 +1,4 @@
-#!/usr%bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Build llama-cpp-python wheel for Linux NVIDIA Datacenter GPUs (CUDA backend, x86_64)

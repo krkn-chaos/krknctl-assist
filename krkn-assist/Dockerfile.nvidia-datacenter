@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 1: BUILDER - Build dependencies and compile/download packages
+# ═══════════════════════════════════════════════════════════════════════════
+FROM fedora:42 AS builder
+
+USER 0
+WORKDIR /build
+
+ARG TARGETARCH
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    GGML_BACKEND_BUILT=cuda
+
+# ── [1/4] Build tools + Python development ───────────────────────────────────
+RUN dnf -y install --setopt=install_weak_deps=False \
+    git curl \
+    python3 python3-pip python3-devel \
+    gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
+    ccache && \
+    dnf clean all
+
+# ── [2/4] llama-cpp-python with CUDA backend (NVIDIA Datacenter GPUs) ────────
+ARG LLAMA_CPP_VERSION=0.3.19
+ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+ARG LLAMA_BACKEND=cuda-datacenter
+
+RUN pip install --upgrade pip setuptools wheel && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+      WHEEL_ARCH="x86_64"; \
+    else \
+      WHEEL_ARCH="aarch64"; \
+    fi && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    echo "Searching for pre-built ${LLAMA_BACKEND} wheel at ${BASE_URL} (${WHEEL_ARCH})..." && \
+    WHEEL_FOUND=0 && \
+    for PYVER in cp313 cp312 cp311 cp310; do \
+      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_${WHEEL_ARCH}.whl"; \
+      echo "Checking: ${WHEEL_URL}"; \
+      if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        echo "Found pre-built wheel (${PYVER}), downloading and installing..."; \
+        pip install "$WHEEL_URL" && \
+        WHEEL_FOUND=1 && \
+        break; \
+      else \
+        echo "Not found for ${PYVER}"; \
+      fi; \
+    done && \
+    if [ "$WHEEL_FOUND" = "0" ]; then \
+      echo "No pre-built wheel found, building from source (this may take a while)..." && \
+      export PATH="/usr/lib64/ccache:$PATH" && \
+      CMAKE_ARGS="\
+        -DGGML_CUDA=on \
+        -DCMAKE_CUDA_ARCHITECTURES=70;80;90 \
+        -DGGML_STATIC=off \
+        -DBUILD_SHARED_LIBS=on \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+      " FORCE_CMAKE=1 \
+        pip install --no-binary=llama-cpp-python "llama-cpp-python==${LLAMA_CPP_VERSION}"; \
+    fi
+
+# ── [3/6] Python runtime dependencies (torch CUDA for NVIDIA GPU) ────────────
+RUN pip install torch torchvision torchaudio && \
+    pip install \
+      fastapi \
+      uvicorn \
+      "transformers>=4.52.4,<5" \
+      huggingface_hub \
+      faiss-cpu \
+      onnx \
+      onnxruntime \
+      onnxscript \
+      "optimum[onnxruntime]>=1.27,<2" \
+      sentence-transformers \
+      requests
+
+# Cleanup Python cache
+RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
+
+# ── [4/6] Copy application code ──────────────────────────────────────────────
+COPY krkn-assist/ /app/
+
+# ── [5/6] Pre-build FAISS index if not already present ───────────────────────
+WORKDIR /app
+RUN if [ ! -f faiss-index/krkn-scenarios.index ]; then \
+      echo "Pre-building FAISS index..."; \
+      python3 prebuild_index.py; \
+    else \
+      echo "Using existing FAISS index from GitHub Actions artifact"; \
+    fi
+
+# ── [6/6] Download GGUF model ────────────────────────────────────────────────
+ARG GGUF_REPO=Qwen/Qwen3-Embedding-0.6B-GGUF
+ARG GGUF_FILE=Qwen3-Embedding-0.6B-Q8_0.gguf
+
+RUN mkdir -p /models && \
+    curl -L --fail --retry 3 --continue-at - \
+    -o /models/${GGUF_FILE} \
+    "https://huggingface.co/${GGUF_REPO}/resolve/main/${GGUF_FILE}"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 2: RUNTIME - CUDA runtime image (smaller, includes CUDA libs)
+# ═══════════════════════════════════════════════════════════════════════════
+FROM docker.io/nvidia/cuda:12.6.1-runtime-ubi9 AS runtime
+
+USER 0
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/app/.cache/huggingface \
+    GGML_BACKEND_BUILT=cuda
+
+ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-Q8_0.gguf
+ENV RETRIEVER_BACKEND=cuda \
+    LLAMA_EMBED_MODEL=${LLAMA_EMBED_MODEL} \
+    LLAMA_GPU_LAYERS=-1
+
+# ── Install ONLY runtime dependencies (CUDA runtime already in base image) ──
+RUN dnf -y install --setopt=install_weak_deps=False \
+        python3 \
+        python3-pip \
+        curl \
+        git && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf /var/lib/dnf /var/cache/yum && \
+    rm -rf /tmp/* /var/tmp/* && \
+    rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* && \
+    find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en_US' -exec rm -rf {} +
+
+# ── Copy GGUF model and pre-built FAISS index from builder ───────────────────
+COPY --from=builder /models /models
+COPY --from=builder /app/faiss-index /app/faiss-index
+
+# ONNX cache comes from GitHub Actions artifact (downloaded before Docker build)
+# If present in build context, it will be copied with application code below
+
+# ── Install Python dependencies in runtime (ensures correct linkage) ─────────
+ARG LLAMA_CPP_VERSION=0.3.19
+ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+ARG LLAMA_BACKEND=cuda-datacenter
+ARG TARGETARCH
+
+# Install llama-cpp-python wheel from GitHub releases
+RUN pip install --upgrade pip setuptools wheel && \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+      WHEEL_ARCH="x86_64"; \
+    else \
+      WHEEL_ARCH="aarch64"; \
+    fi && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    WHEEL_FOUND=0 && \
+    for PYVER in cp313 cp312 cp311 cp310; do \
+      WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_${WHEEL_ARCH}.whl"; \
+      if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        pip install "$WHEEL_URL" && \
+        WHEEL_FOUND=1 && \
+        break; \
+      fi; \
+    done && \
+    if [ "$WHEEL_FOUND" = "0" ]; then \
+      echo "WARNING: No pre-built wheel found for runtime stage"; \
+    fi
+
+# Install remaining Python dependencies (ONNX runtime only, no torch/sentence-transformers)
+# FAISS index and ONNX reranker are pre-built via GitHub Actions artifacts
+RUN pip install \
+      fastapi \
+      uvicorn \
+      "transformers>=4.52.4,<5" \
+      huggingface_hub \
+      faiss-cpu \
+      onnx \
+      onnxruntime \
+      requests && \
+    find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
+
+# ── Copy application code ────────────────────────────────────────────────────
+COPY krkn-assist/ /app/
+
+# Pre-built index is already available at /app/faiss-index from builder stage
+# Service will skip indexing at startup since INDEX_PATH, META_PATH, DOCS_CACHE_PATH exist
+
+EXPOSE 8080 18080
+CMD ["python3", "api_server.py"]

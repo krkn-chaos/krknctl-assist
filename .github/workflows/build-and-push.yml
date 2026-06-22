@@ -1,16 +1,16 @@
 name: Build and Push Docker Images
 
-# Builds and pushes multi-arch Docker images to Quay.io on every tag push.
+# Builds and pushes Docker images to Quay.io on every tag push.
+#
+# Three image variants:
+# - apple-silicon (ARM64): Vulkan backend for macOS Apple Silicon
+# - nvidia-consumer (AMD64 + ARM64): CUDA backend for RTX/GTX consumer GPUs
+# - nvidia-datacenter (AMD64 + ARM64): CUDA backend for V100/A100/H100 datacenter GPUs
 #
 # Performance optimization:
-# - ARM64 builds use QEMU emulation (~1.5h compile time for llama-cpp-python)
-# - To speed up: pre-compile ARM64 wheel locally and upload to GitHub Releases
-# - See WHEELS_QUICKSTART.md for details
-#
-# Requirements for pre-compiled wheels:
-# - Apple Silicon Mac (M1/M2/M3/M4) OR ARM64 Linux machine
-# - Run: ./scripts/build_wheel_local.sh <version>
-# - Run: ./scripts/upload_wheel.sh <version>
+# - Pre-compiled llama-cpp-python wheels from GitHub Releases
+# - Pre-built FAISS index and ONNX reranker models
+# - Native builds (no QEMU cross-compilation)
 
 on:
   push:
@@ -96,7 +96,7 @@ jobs:
 
   build-apple-silicon:
     needs: prebuild-models
-    name: Build Apple Silicon Image
+    name: Build Apple Silicon Image (ARM64 Vulkan)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -141,9 +141,9 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
 
-  build-intel:
+  build-nvidia-consumer:
     needs: prebuild-models
-    name: Build Intel Multi-arch Image
+    name: Build NVIDIA Consumer Image (AMD64 + ARM64 CUDA)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -175,14 +175,61 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build and push Intel multi-arch image
+      - name: Build and push NVIDIA Consumer image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./krkn-assist/Dockerfile.linux
+          file: ./krkn-assist/Dockerfile.nvidia-consumer
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: quay.io/krkn-chaos/krknctl-assist:intel
+          tags: quay.io/krkn-chaos/krknctl-assist:nvidia-consumer
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+  build-nvidia-datacenter:
+    needs: prebuild-models
+    name: Build NVIDIA Datacenter Image (AMD64 + ARM64 CUDA)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download pre-built FAISS index
+        uses: actions/download-artifact@v4
+        with:
+          name: faiss-index
+          path: krkn-assist/faiss-index/
+
+      - name: Download pre-built ONNX cache (optional)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: onnx-cache
+          path: krkn-assist/.cache/huggingface/onnx_rerankers/
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and push NVIDIA Datacenter image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./krkn-assist/Dockerfile.nvidia-datacenter
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: quay.io/krkn-chaos/krknctl-assist:nvidia-datacenter
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
