@@ -11,17 +11,26 @@ CUDA_VERSION="${3:-12.6}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Must be x86_64
+# Auto-detect platform - native build only
 ARCH="$(uname -m)"
-if [[ "$ARCH" != "x86_64" && "$ARCH" != "amd64" ]]; then
-  echo "❌ This script must run on x86_64 architecture"
-  echo "   Current architecture: $ARCH"
-  exit 1
-fi
+case "$ARCH" in
+  x86_64|amd64)
+    WHEEL_PLATFORM="linux_x86_64"
+    CONTAINER_PLATFORM="linux/amd64"
+    ;;
+  arm64|aarch64)
+    WHEEL_PLATFORM="linux_aarch64"
+    CONTAINER_PLATFORM="linux/arm64"
+    ;;
+  *)
+    echo "❌ Unsupported architecture: $ARCH"
+    exit 1
+    ;;
+esac
 
 echo "🎮 Building llama-cpp-python ${LLAMA_CPP_VERSION} wheel (Linux NVIDIA Consumer)"
 echo "   Backend: CUDA ${CUDA_VERSION}"
-echo "   Platform: linux/amd64"
+echo "   Platform: ${CONTAINER_PLATFORM}"
 echo "   GPU Support: RTX 20xx/30xx/40xx, GTX 1660 Ti"
 echo "   CUDA Architectures: 75, 86, 89"
 echo "   Output: $OUTPUT_DIR"
@@ -36,7 +45,7 @@ echo "⏳ Building wheel with CUDA ${CUDA_VERSION} backend (15-25 minutes)..."
 echo ""
 
 podman run --rm \
-  --platform linux/amd64 \
+  --platform "$CONTAINER_PLATFORM" \
   -v "$OUTPUT_DIR_ABS:/output" \
   -e "LLAMA_CPP_VERSION=$LLAMA_CPP_VERSION" \
   -e "CUDA_VERSION=$CUDA_VERSION" \
@@ -70,7 +79,7 @@ podman run --rm \
     echo "✅ Wheel built successfully"
   '
 
-WHEEL_FILE="$(ls -1 "$OUTPUT_DIR_ABS"/llama_cpp_python-*-linux_x86_64.whl 2>/dev/null | head -n1)"
+WHEEL_FILE="$(ls -1 "$OUTPUT_DIR_ABS"/llama_cpp_python-*-${WHEEL_PLATFORM}.whl 2>/dev/null | head -n1)"
 
 if [[ ! -f "$WHEEL_FILE" ]]; then
   echo "❌ Wheel file not found in $OUTPUT_DIR_ABS"
