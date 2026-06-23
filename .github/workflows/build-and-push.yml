@@ -30,6 +30,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: |
+            krkn-assist/requirements.txt
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-py313-${{ hashFiles('krkn-assist/requirements.txt') }}-${{ hashFiles('.github/workflows/build-and-push.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-py313-
 
       - name: Install dependencies
         run: |
