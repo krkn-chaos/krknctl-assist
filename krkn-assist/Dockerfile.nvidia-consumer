@@ -36,7 +36,7 @@ RUN pip install --upgrade pip setuptools wheel && \
     BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
     echo "Searching for pre-built ${LLAMA_BACKEND} wheel at ${BASE_URL} (${WHEEL_ARCH})..." && \
     WHEEL_FOUND=0 && \
-    for PYVER in cp313 cp312 cp311 cp310; do \
+    for PYVER in cp39 cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_${WHEEL_ARCH}.whl"; \
       echo "Checking: ${WHEEL_URL}"; \
       if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
