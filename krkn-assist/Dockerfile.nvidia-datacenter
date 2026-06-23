@@ -64,7 +64,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 # ── [3/6] Python runtime dependencies (torch CUDA for NVIDIA GPU) ────────────
 RUN pip install torch torchvision torchaudio && \
-    pip install \
+    pip install --ignore-installed requests \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -74,8 +74,7 @@ RUN pip install torch torchvision torchaudio && \
       onnxruntime \
       onnxscript \
       "optimum[onnxruntime]>=1.27,<2" \
-      sentence-transformers \
-      requests
+      sentence-transformers
 
 # Cleanup Python cache
 RUN find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
