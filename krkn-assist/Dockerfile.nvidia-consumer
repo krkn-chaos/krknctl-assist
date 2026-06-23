@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # STAGE 1: BUILDER - Build dependencies and compile/download packages
 # ═══════════════════════════════════════════════════════════════════════════
-FROM fedora:42 AS builder
+FROM docker.io/nvidia/cuda:12.6.1-devel-ubi9 AS builder
 
 USER 0
 WORKDIR /build
@@ -13,12 +13,14 @@ ENV PYTHONUNBUFFERED=1 \
     GGML_BACKEND_BUILT=cuda
 
 # ── [1/4] Build tools + Python development ───────────────────────────────────
-RUN dnf -y install --setopt=install_weak_deps=False \
+RUN dnf -y install --setopt=install_weak_deps=False --allowerasing \
     git curl \
     python3 python3-pip python3-devel \
-    gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config \
-    ccache && \
+    gcc gcc-c++ cmake ninja-build make pkgconf-pkg-config && \
     dnf clean all
+
+# ccache is optional on UBI9
+RUN dnf -y install ccache 2>/dev/null || echo "ccache not available, skipping"
 
 # ── [2/4] llama-cpp-python with CUDA backend (NVIDIA Consumer GPUs) ──────────
 ARG LLAMA_CPP_VERSION=0.3.19
