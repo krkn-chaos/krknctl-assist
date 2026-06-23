@@ -66,12 +66,19 @@ podman run --rm \
     echo "Building llama-cpp-python ${LLAMA_CPP_VERSION} with CUDA ${CUDA_VERSION} backend..."
     echo "Target GPUs: V100, A100, H100 (datacenter/cloud)"
     echo "CUDA Compute Capabilities: 70, 80, 90"
+
+    # Use all available cores for parallel build
+    NCORES=$(nproc)
+    echo "Using $NCORES parallel jobs"
+
     CMAKE_ARGS="\
       -DGGML_CUDA=on \
       -DCMAKE_CUDA_ARCHITECTURES=70;80;90 \
       -DGGML_STATIC=off \
       -DBUILD_SHARED_LIBS=on \
-    " FORCE_CMAKE=1 \
+    " CMAKE_BUILD_PARALLEL_LEVEL=$NCORES \
+      MAX_JOBS=$NCORES \
+      FORCE_CMAKE=1 \
       pip3 wheel --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_VERSION}" \
         -w /output

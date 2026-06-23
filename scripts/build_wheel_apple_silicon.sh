@@ -44,13 +44,20 @@ podman run --rm \
 
     echo "Building llama-cpp-python ${LLAMA_CPP_VERSION} with Vulkan backend..."
     export PATH="/usr/lib64/ccache:$PATH"
+
+    # Use all available cores for parallel build
+    NCORES=$(nproc)
+    echo "Using $NCORES parallel jobs"
+
     CMAKE_ARGS="\
       -DGGML_VULKAN=on \
       -DGGML_VULKAN_COOPMAT=OFF \
       -DGGML_VULKAN_COOPMAT2=OFF \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache \
       -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    " FORCE_CMAKE=1 \
+    " CMAKE_BUILD_PARALLEL_LEVEL=$NCORES \
+      MAX_JOBS=$NCORES \
+      FORCE_CMAKE=1 \
       pip3 wheel --no-binary=llama-cpp-python \
         "llama-cpp-python==${LLAMA_CPP_VERSION}" \
         -w /output
