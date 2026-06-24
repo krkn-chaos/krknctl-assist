@@ -165,22 +165,26 @@ ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
 ARG LLAMA_BACKEND=vulkan
 
-# Copy and install pre-built llama-cpp-python wheel from builder
-RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-packages,target=/tmp/site-packages \
-    cp /tmp/site-packages/llama_cpp_python*.dist-info -r /tmp/ 2>/dev/null || true && \
-    pip install --upgrade pip setuptools wheel && \
+# Install llama-cpp-python wheel from GitHub releases
+RUN pip install --upgrade pip setuptools wheel && \
     BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    echo "Searching for ${LLAMA_BACKEND} wheel at ${BASE_URL}..." && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl"; \
+      echo "Checking: ${WHEEL_URL}"; \
       if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        echo "Found wheel (${PYVER}), installing..."; \
         pip install "$WHEEL_URL" && \
         WHEEL_FOUND=1 && \
         break; \
+      else \
+        echo "Not found for ${PYVER}"; \
       fi; \
     done && \
     if [ "$WHEEL_FOUND" = "0" ]; then \
-      echo "WARNING: No pre-built wheel found for runtime stage"; \
+      echo "ERROR: No pre-built wheel found for runtime stage"; \
+      exit 1; \
     fi
 
 # Install remaining Python dependencies
