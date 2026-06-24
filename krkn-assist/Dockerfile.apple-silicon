@@ -183,9 +183,11 @@ RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-package
       echo "WARNING: No pre-built wheel found for runtime stage"; \
     fi
 
-# Install remaining Python dependencies (ONNX runtime only, no torch/sentence-transformers)
+# Install remaining Python dependencies
 # FAISS index and ONNX reranker are pre-built via GitHub Actions artifacts
-RUN pip install \
+RUN pip install --index-url https://download.pytorch.org/whl/cpu \
+      torch torchvision torchaudio && \
+    pip install \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -193,7 +195,9 @@ RUN pip install \
       faiss-cpu \
       onnx \
       onnxruntime \
-      requests && \
+      onnxscript \
+      "optimum[onnxruntime]>=1.27,<2" \
+      sentence-transformers && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
 
