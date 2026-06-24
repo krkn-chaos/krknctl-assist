@@ -163,12 +163,13 @@ COPY --from=builder /app/faiss-index /app/faiss-index
 # ── Install Python dependencies in runtime (ensures correct linkage) ─────────
 ARG LLAMA_CPP_VERSION=0.3.19
 ARG GITHUB_REPO=krkn-chaos/krknctl-assist
+ARG LLAMA_BACKEND=vulkan
 
 # Copy and install pre-built llama-cpp-python wheel from builder
 RUN --mount=type=bind,from=builder,source=/usr/local/lib/python3.13/site-packages,target=/tmp/site-packages \
     cp /tmp/site-packages/llama_cpp_python*.dist-info -r /tmp/ 2>/dev/null || true && \
     pip install --upgrade pip setuptools wheel && \
-    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}" && \
+    BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_aarch64.whl"; \

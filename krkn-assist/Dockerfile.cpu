@@ -151,17 +151,23 @@ RUN pip install --upgrade pip setuptools wheel && \
       WHEEL_ARCH="aarch64"; \
     fi && \
     BASE_URL="https://github.com/${GITHUB_REPO}/releases/download/llama-cpp-${LLAMA_CPP_VERSION}-${LLAMA_BACKEND}" && \
+    echo "Searching for ${LLAMA_BACKEND} wheel at ${BASE_URL}..." && \
     WHEEL_FOUND=0 && \
     for PYVER in cp313 cp312 cp311 cp310; do \
       WHEEL_URL="${BASE_URL}/llama_cpp_python-${LLAMA_CPP_VERSION}-${PYVER}-${PYVER}-linux_${WHEEL_ARCH}.whl"; \
+      echo "Checking: ${WHEEL_URL}"; \
       if curl -fsSL --head --max-time 30 "$WHEEL_URL" >/dev/null 2>&1; then \
+        echo "Found wheel (${PYVER}), installing..."; \
         pip install "$WHEEL_URL" && \
         WHEEL_FOUND=1 && \
         break; \
+      else \
+        echo "Not found for ${PYVER}"; \
       fi; \
     done && \
     if [ "$WHEEL_FOUND" = "0" ]; then \
-      echo "WARNING: No pre-built wheel found for runtime stage"; \
+      echo "ERROR: No pre-built wheel found for runtime stage"; \
+      exit 1; \
     fi
 
 # Install remaining Python dependencies (ONNX runtime only, no torch/sentence-transformers)
