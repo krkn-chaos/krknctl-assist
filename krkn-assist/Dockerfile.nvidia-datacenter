@@ -172,9 +172,10 @@ RUN pip install --upgrade pip setuptools wheel && \
       exit 1; \
     fi
 
-# Install remaining Python dependencies (ONNX runtime only, no torch/sentence-transformers)
+# Install remaining Python dependencies
 # FAISS index and ONNX reranker are pre-built via GitHub Actions artifacts
-RUN pip install \
+RUN pip install torch torchvision torchaudio && \
+    pip install --ignore-installed requests \
       fastapi \
       uvicorn \
       "transformers>=4.52.4,<5" \
@@ -182,7 +183,9 @@ RUN pip install \
       faiss-cpu \
       onnx \
       onnxruntime \
-      requests && \
+      onnxscript \
+      "optimum[onnxruntime]>=1.27,<2" \
+      sentence-transformers && \
     find /usr/local/lib/python*/site-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python*/site-packages -type f -name '*.pyc' -delete 2>/dev/null || true
 
