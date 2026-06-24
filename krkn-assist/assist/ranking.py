@@ -642,7 +642,7 @@ def resolve_device(device_preference: str = "auto", cpu_only: bool = False) -> s
 
 
 def resolve_backend(backend: str, llama_model_path: str) -> str:
-    if backend in {"torch", "vulkan"}:
+    if backend in {"torch", "vulkan", "cuda"}:
         return backend
     return "vulkan"
 
@@ -1303,6 +1303,11 @@ def create_ranker(
         return _ranker_instance
 
     if resolved_backend == "vulkan":
+        _ranker_instance = VulkanRanker(
+            model_path=llama_model_path,
+            gpu_layers=int(llama_gpu_layers),
+        )
+    elif resolved_backend == "cuda":
         _ranker_instance = VulkanRanker(
             model_path=llama_model_path,
             gpu_layers=int(llama_gpu_layers),
