@@ -1043,19 +1043,28 @@ class VulkanRanker(BaseRanker):
         self.main_gpu = preferred_devices[0]["index"] if preferred_devices else None
         self.gpu_layers = gpu_layers
         self.cross_encoder_model_name = cross_encoder_model
+        backend = os.environ.get("GGML_BACKEND_BUILT", "unknown")
+        logger.info(
+            f"Initializing VulkanRanker: backend={backend}, gpu_layers={gpu_layers}, "
+            f"main_gpu={self.main_gpu}, model={model_path}"
+        )
+
         llama_kwargs = {
             "model_path": model_path,
             "embedding": True,
             "n_gpu_layers": self.gpu_layers,
-            "verbose": False,
+            "verbose": True,  # Enable to see GPU allocation
             "n_batch": 512,
         }
         if self.main_gpu is not None and self.gpu_layers != 0:
             llama_kwargs["main_gpu"] = int(self.main_gpu)
         try:
+            logger.info(f"Loading Llama model with kwargs: {llama_kwargs}")
             self.llm = Llama(**llama_kwargs)
+            logger.info("Llama model loaded successfully - check output for GPU allocation messages")
         except TypeError:
             llama_kwargs.pop("main_gpu", None)
+            logger.info(f"Retrying Llama load without main_gpu: {llama_kwargs}")
             self.llm = Llama(**llama_kwargs)
         super().__init__()
 
