@@ -10,7 +10,8 @@ ARG TARGETARCH
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    GGML_BACKEND_BUILT=cuda
+    GGML_BACKEND_BUILT=cuda \
+    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
 # ── [1/4] Build tools + Python development ───────────────────────────────────
 RUN dnf -y install --setopt=install_weak_deps=False --allowerasing \
@@ -112,7 +113,8 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/app/.cache/huggingface \
-    GGML_BACKEND_BUILT=cuda
+    GGML_BACKEND_BUILT=cuda \
+    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
 ARG LLAMA_EMBED_MODEL=/models/Qwen3-Embedding-0.6B-Q8_0.gguf
 ENV RETRIEVER_BACKEND=cuda \
